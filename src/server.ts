@@ -148,23 +148,29 @@ app.get('/api/companies', async (request) => {
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
   const offset = Math.max(0, Number(query.offset) || 0);
-  const select = `SELECT e.id, e.name, e.website, e.verified_domain, e.description, e.industry, e.headquarters, e.company_size, e.prospect_status, e.first_discovered_at, e.updated_at,
-    count(DISTINCT b.id)::int AS board_count,
-    count(DISTINCT b.id) FILTER (WHERE b.status='active')::int AS active_board_count,
-    count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
-    count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering,
-    count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_engineering_7d,
-    count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '30 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_engineering_30d,
-    count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote')::int AS remote_listing_count,
-    count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%')::int AS contract_listing_count,
-    max(l.last_observed_at) AS latest_hiring_activity,
-    (LEAST(30, count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0) * 5)
-      + LEAST(25, count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0) * 8)
-      + LEAST(20, count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%') * 10)
-      + LEAST(10, count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote') * 2)
-      + CASE WHEN max(l.last_observed_at) >= now() - interval '30 days' THEN 5 ELSE 0 END)::int AS prospect_score,
-    COALESCE(array_agg(DISTINCT b.provider) FILTER (WHERE b.id IS NOT NULL), '{}') AS providers
-    FROM employers e LEFT JOIN job_boards b ON b.employer_id=e.id LEFT JOIN job_listings l ON l.board_id=b.id ${where} GROUP BY e.id`;
+  const select = `WITH metrics AS (
+    SELECT e.id,
+      count(DISTINCT b.id)::int AS board_count,
+      count(DISTINCT b.id) FILTER (WHERE b.status='active')::int AS active_board_count,
+      count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
+      count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering,
+      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_engineering_7d,
+      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '30 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_engineering_30d,
+      count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote')::int AS remote_listing_count,
+      count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%')::int AS contract_listing_count,
+      max(l.last_observed_at) AS latest_hiring_activity,
+      (LEAST(30, count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0) * 5)
+        + LEAST(25, count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0) * 8)
+        + LEAST(20, count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%') * 10)
+        + LEAST(10, count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote') * 2)
+        + CASE WHEN max(l.last_observed_at) >= now() - interval '30 days' THEN 5 ELSE 0 END)::int AS prospect_score,
+      COALESCE(array_agg(DISTINCT b.provider) FILTER (WHERE b.id IS NOT NULL), '{}') AS providers
+    FROM employers e LEFT JOIN job_boards b ON b.employer_id=e.id LEFT JOIN job_listings l ON l.board_id=b.id
+    GROUP BY e.id
+  )
+  SELECT e.id, e.name, e.website, e.verified_domain, e.description, e.industry, e.headquarters, e.company_size, e.prospect_status, e.first_discovered_at, e.updated_at,
+    metrics.board_count, metrics.active_board_count, metrics.active_listing_count, metrics.active_engineering, metrics.new_engineering_7d, metrics.new_engineering_30d, metrics.remote_listing_count, metrics.contract_listing_count, metrics.latest_hiring_activity, metrics.prospect_score, metrics.providers
+  FROM employers e JOIN metrics ON metrics.id=e.id ${where}`;
   const sort = companySorts[query.sort ?? ''] ?? companySorts.name;
   const result = await pool.query(`${select} ORDER BY ${sort} LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]);
   const companies = result.rows.map((row) => ({ ...row, prospect_score: calculateProspectScore({ activeEngineering: Number(row.active_engineering), newEngineering7d: Number(row.new_engineering_7d), contractListings: Number(row.contract_listing_count), remoteListings: Number(row.remote_listing_count), hasRecentActivity: Boolean(row.latest_hiring_activity && new Date(row.latest_hiring_activity).getTime() >= Date.now() - 30 * 86_400_000) }).score }));
@@ -191,7 +197,7 @@ app.get('/api/companies/:id', async (request, reply) => {
       count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%')::int AS contract_listing_count,
       max(b.last_successful_poll) AS last_successful_monitoring
       FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1`, [id]),
-    pool.query(`SELECT specialty, count(*)::int AS listing_count FROM job_listings l JOIN job_boards b ON b.id=l.board_id CROSS JOIN LATERAL jsonb_array_elements_text(l.engineering_specialties) specialty WHERE b.employer_id=$1 AND l.is_active GROUP BY specialty ORDER BY listing_count DESC, specialty`, [id]),
+    pool.query(`SELECT specialty_values.value AS specialty, count(*)::int AS listing_count FROM job_listings l JOIN job_boards b ON b.id=l.board_id CROSS JOIN LATERAL jsonb_array_elements_text(l.engineering_specialties) AS specialty_values(value) WHERE b.employer_id=$1 AND l.is_active GROUP BY specialty_values.value ORDER BY listing_count DESC, specialty_values.value`, [id]),
     pool.query(`SELECT l.id, l.title, l.department, l.location, l.remote_mode, l.employment_type, l.seniority, l.application_url, l.original_url, l.source_updated_at, l.first_observed_at, l.engineering_specialties, l.technologies, l.location_fit, l.location_fit_score, b.provider, b.board_identifier FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=$1 AND l.is_active ORDER BY l.source_updated_at DESC NULLS LAST, l.first_observed_at DESC LIMIT 100`, [id])
     ,pool.query(`SELECT date_trunc('day', o.observed_at) AS day, sum(o.listings_seen)::int AS listings_seen, sum(o.active_engineering)::int AS active_engineering, sum(o.new_listings)::int AS new_listings, sum(o.new_engineering)::int AS new_engineering, sum(o.missing_listings)::int AS missing_listings FROM listing_board_observations o JOIN job_boards b ON b.id=o.board_id WHERE b.employer_id=$1 GROUP BY date_trunc('day', o.observed_at) ORDER BY day ASC LIMIT 180`, [id])
   ]);
