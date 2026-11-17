@@ -3,6 +3,7 @@ ALTER TABLE employers ADD COLUMN IF NOT EXISTS description text NOT NULL DEFAULT
 ALTER TABLE employers ADD COLUMN IF NOT EXISTS industry text NOT NULL DEFAULT '';
 ALTER TABLE employers ADD COLUMN IF NOT EXISTS headquarters text NOT NULL DEFAULT '';
 ALTER TABLE employers ADD COLUMN IF NOT EXISTS company_size text NOT NULL DEFAULT '';
+ALTER TABLE employers ADD COLUMN IF NOT EXISTS first_discovered_at timestamptz;
 ALTER TABLE employers ADD COLUMN IF NOT EXISTS prospect_status text NOT NULL DEFAULT 'unreviewed' CHECK (prospect_status IN ('unreviewed', 'interesting', 'contacted', 'follow_up', 'not_interested'));
 ALTER TABLE employers ADD COLUMN IF NOT EXISTS prospect_notes text NOT NULL DEFAULT '';
 ALTER TABLE employers ADD COLUMN IF NOT EXISTS follow_up_at timestamptz;
@@ -11,6 +12,10 @@ ALTER TABLE employers ADD COLUMN IF NOT EXISTS contacted_at timestamptz;
 ALTER TABLE job_listings ADD COLUMN IF NOT EXISTS engineering_specialties jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE job_listings ADD COLUMN IF NOT EXISTS technologies jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE job_listings ADD COLUMN IF NOT EXISTS company_metadata_backfilled_at timestamptz;
+
+UPDATE employers SET first_discovered_at=created_at WHERE first_discovered_at IS NULL;
+ALTER TABLE employers ALTER COLUMN first_discovered_at SET DEFAULT now();
+ALTER TABLE employers ALTER COLUMN first_discovered_at SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS listing_board_observations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
