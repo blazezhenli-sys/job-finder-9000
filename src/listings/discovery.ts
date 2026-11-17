@@ -179,13 +179,14 @@ async function runDiscoveryJob(jobId: string) {
   const jobResult = await pool.query('SELECT * FROM listing_discovery_jobs WHERE id=$1', [jobId]); const job = jobResult.rows[0]; if (!job) return;
   await updateJob(jobId, { status: 'running', started_at: job.started_at ?? new Date() });
   const selected = (job.providers as string[]).filter((value): value is DiscoveryProvider => providers.includes(value as DiscoveryProvider));
-  const cursor = (job.cursor ?? {}) as { collected?: string[]; postsExtracted?: boolean; currentProvider?: DiscoveryProvider };
+  const cursor = (job.cursor ?? {}) as { collected?: string[]; postsExtracted?: boolean; currentProvider?: DiscoveryProvider; phase?: string; validationProcessed?: number; validationTotal?: number };
   try {
-    if (!cursor.postsExtracted) { await extractExistingOpportunityUrls(jobId); cursor.postsExtracted = true; await updateJob(jobId, { cursor: JSON.stringify(cursor) }); }
+    if (!cursor.postsExtracted) { cursor.phase = 'extracting_posts'; await updateJob(jobId, { cursor: JSON.stringify(cursor) }); await extractExistingOpportunityUrls(jobId); cursor.postsExtracted = true; await updateJob(jobId, { cursor: JSON.stringify(cursor) }); }
     let collectionError: string | undefined;
     for (const provider of selected) {
       if (cursor.collected?.includes(provider)) continue;
       cursor.currentProvider = provider;
+      cursor.phase = 'collecting_archive';
       await updateJob(jobId, { cursor: JSON.stringify(cursor) });
       let candidates: Candidate[];
       try {
@@ -205,14 +206,17 @@ async function runDiscoveryJob(jobId: string) {
     }
     await pool.query(`UPDATE listing_discovery_candidates SET discovery_job_id=$1 WHERE discovery_job_id IS NULL AND status='candidate'`, [jobId]);
     const candidates = await pool.query(`SELECT id, provider, board_identifier, board_url, employer_name, discovery_source, validation_attempts FROM listing_discovery_candidates WHERE discovery_job_id=$1 AND status='candidate' AND next_validation_at <= now() ORDER BY created_at LIMIT 200`, [jobId]);
+    cursor.phase = 'validating'; cursor.validationProcessed = 0; cursor.validationTotal = candidates.rows.length; await updateJob(jobId, { cursor: JSON.stringify(cursor) });
     let errors = 0;
     for (let index = 0; index < candidates.rows.length; index += 4) {
-      const batch = candidates.rows.slice(index, index + 4); const results = await Promise.all(batch.map((row) => validateCandidate(row).catch(() => { errors += 1; return false; }))); if (results.some(Boolean)) await refreshJobCounts(jobId);
+      const batch = candidates.rows.slice(index, index + 4); await Promise.all(batch.map((row) => validateCandidate(row).catch(() => { errors += 1; return false; })));
+      cursor.validationProcessed = index + batch.length;
+      if (index % 20 === 0 || cursor.validationProcessed >= candidates.rows.length) { await refreshJobCounts(jobId); await updateJob(jobId, { cursor: JSON.stringify(cursor) }); }
     }
     await refreshJobCounts(jobId);
     const remaining = await pool.query(`SELECT count(*)::int AS count FROM listing_discovery_candidates WHERE discovery_job_id=$1 AND status='candidate'`, [jobId]);
-    if (remaining.rows[0].count === 0 && !collectionError && selected.every((value) => cursor.collected?.includes(value))) await updateJob(jobId, { status: 'completed', finished_at: new Date(), error_count: errors, last_error: null });
-    else { await updateJob(jobId, { status: 'queued', error_count: errors, last_error: collectionError ?? null }); scheduleDiscoveryRetry(); }
+    if (remaining.rows[0].count === 0 && !collectionError && selected.every((value) => cursor.collected?.includes(value))) { cursor.phase = 'completed'; await updateJob(jobId, { status: 'completed', finished_at: new Date(), error_count: errors, last_error: null, cursor: JSON.stringify(cursor) }); }
+    else { cursor.phase = collectionError ? 'waiting_retry' : 'waiting_validation'; await updateJob(jobId, { status: 'queued', error_count: errors, last_error: collectionError ?? null, cursor: JSON.stringify(cursor) }); scheduleDiscoveryRetry(); }
     events.emit('listing-discovery', { jobId, status: remaining.rows[0].count === 0 && !collectionError ? 'completed' : 'queued' });
   } catch (error) {
     await updateJob(jobId, { status: 'failed', last_error: error instanceof Error ? error.message : String(error), error_count: Number(job.error_count) + 1 });
