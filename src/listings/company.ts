@@ -1,4 +1,5 @@
 import type { NormalizedJobListing } from '../types.js';
+import { pool } from '../db.js';
 
 export const engineeringSpecialtyLabels: Record<string, string> = {
   backend_api: 'Backend / API',
@@ -52,4 +53,25 @@ export function calculateProspectScore(inputs: CompanyScoreInputs): { score: num
     { label: 'Recent monitoring activity', points: inputs.hasRecentActivity ? 5 : 0, evidence: inputs.hasRecentActivity ? 'Observed activity in the last 30 days' : 'No recent activity evidence' }
   ].filter((factor) => factor.points > 0);
   return { score: Math.min(100, factors.reduce((total, factor) => total + factor.points, 0)), factors };
+}
+
+export async function backfillListingMetadata() {
+  const marker = await pool.query(`SELECT 1 FROM app_settings WHERE key='company_listing_metadata_backfill_v1'`);
+  if (marker.rows[0]) return;
+  let processed = 0;
+  while (true) {
+    const result = await pool.query(`SELECT id, title, description, department, team FROM job_listings WHERE engineering_specialties='[]'::jsonb OR technologies='[]'::jsonb ORDER BY id LIMIT 500`);
+    if (!result.rows.length) break;
+    const updates = result.rows.map((row) => ({ id: row.id, engineering_specialties: classifyEngineeringSpecialties(row), technologies: extractListingTechnologies(row) }));
+    await pool.query(`UPDATE job_listings AS listing
+      SET engineering_specialties=CASE WHEN listing.engineering_specialties='[]'::jsonb THEN updates.engineering_specialties ELSE listing.engineering_specialties END,
+          technologies=CASE WHEN listing.technologies='[]'::jsonb THEN updates.technologies ELSE listing.technologies END,
+          updated_at=now()
+      FROM jsonb_to_recordset($1::jsonb) AS updates(id uuid, engineering_specialties jsonb, technologies jsonb)
+      WHERE listing.id=updates.id`, [JSON.stringify(updates)]);
+    processed += result.rows.length;
+    if (processed % 5_000 === 0) console.info(`Company metadata backfill: ${processed} listings processed`);
+  }
+  await pool.query(`INSERT INTO app_settings (key, value) VALUES ('company_listing_metadata_backfill_v1', $1) ON CONFLICT (key) DO NOTHING`, [JSON.stringify({ completed: true, processed })]);
+  console.info(`Company metadata backfill complete: ${processed} listings processed`);
 }

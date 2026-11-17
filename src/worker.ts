@@ -9,6 +9,7 @@ import { RedditSource } from './sources/reddit.js';
 import type { SourceAdapter } from './sources/types.js';
 import { startListingPolling } from './listings/service.js';
 import { startListingDiscovery } from './listings/discovery.js';
+import { backfillListingMetadata } from './listings/company.js';
 
 let started = false;
 const sources: SourceAdapter[] = [];
@@ -34,6 +35,7 @@ export async function startWorkers() {
   setInterval(() => void removeExpired(), 60 * 60 * 1000);
   if (config.enableListings) listingTimer = startListingPolling(config.listingsPollIntervalMs);
   if (config.enableListings && config.enableListingDiscovery) discoveryTimer = await startListingDiscovery(config.listingDiscoveryIntervalMs);
+  if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   void deliverNotifications();
 }
 
