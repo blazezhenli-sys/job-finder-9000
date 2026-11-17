@@ -118,7 +118,17 @@ app.patch('/api/listings/:id', async (request, reply) => {
   return result.rows[0];
 });
 
-app.get('/api/job-boards', async () => ({ boards: (await pool.query(`SELECT b.*, e.name AS employer_name, e.website AS company_website, (SELECT count(*)::int FROM job_listings l WHERE l.board_id=b.id AND l.is_active) AS active_listing_count FROM job_boards b JOIN employers e ON e.id=b.employer_id ORDER BY b.status, e.name, b.provider`)).rows }));
+app.get('/api/job-boards', async (request) => {
+  const query = request.query as { limit?: string; offset?: string; status?: string; provider?: string; employer?: string };
+  const values: unknown[] = []; const conditions: string[] = [];
+  if (query.status && ['active', 'disabled'].includes(query.status)) { values.push(query.status); conditions.push(`b.status=$${values.length}`); }
+  if (provider(query.provider)) { values.push(query.provider); conditions.push(`b.provider=$${values.length}`); }
+  if (query.employer) { values.push(`%${query.employer}%`); conditions.push(`e.name ILIKE $${values.length}`); }
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 50)); const offset = Math.max(0, Number(query.offset) || 0); const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const boards = await pool.query(`SELECT b.*, e.name AS employer_name, e.website AS company_website, (SELECT count(*)::int FROM job_listings l WHERE l.board_id=b.id AND l.is_active) AS active_listing_count FROM job_boards b JOIN employers e ON e.id=b.employer_id ${where} ORDER BY b.status, e.name, b.provider LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]);
+  const total = await pool.query(`SELECT count(*)::int AS count FROM job_boards b JOIN employers e ON e.id=b.employer_id ${where}`, values);
+  return { boards: boards.rows, total: total.rows[0].count, limit, offset };
+});
 
 app.post('/api/job-boards', async (request, reply) => {
   const body = request.body as { employerName?: string; companyWebsite?: string; provider?: string; boardIdentifier?: string; boardUrl?: string; discoverySource?: string; pollingIntervalSeconds?: number };
