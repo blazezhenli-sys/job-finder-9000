@@ -80,7 +80,7 @@ function boardIdentifier(value: unknown, providerName: AtsProvider): string {
 }
 
 app.get('/api/listings', async (request) => {
-  const query = request.query as { provider?: string; status?: string; employer?: string; department?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; locationFit?: string; workMode?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
+  const query = request.query as { provider?: string; status?: string; employer?: string; department?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; maxAgeDays?: string; locationFit?: string; workMode?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
   const values: unknown[] = []; const conditions: string[] = [];
   if (provider(query.provider)) { values.push(query.provider); conditions.push(`l.provider = $${values.length}`); }
   if (query.status && listingStatuses.includes(query.status as JobListingStatus)) { values.push(query.status); conditions.push(`l.status = $${values.length}`); }
@@ -91,6 +91,7 @@ app.get('/api/listings', async (request) => {
   if (query.location) { values.push(`%${query.location}%`); conditions.push(`(l.location ILIKE $${values.length} OR l.secondary_locations::text ILIKE $${values.length} OR l.geographic_restrictions::text ILIKE $${values.length})`); }
   if (query.salaryCurrency) { values.push(query.salaryCurrency.toUpperCase()); conditions.push(`l.compensation_currency = $${values.length}`); }
   if (query.minSalary && Number.isFinite(Number(query.minSalary)) && Number(query.minSalary) > 0) { values.push(Number(query.minSalary)); conditions.push(`COALESCE(l.compensation_max, l.compensation_min) >= $${values.length}`); }
+  if (query.maxAgeDays && Number.isFinite(Number(query.maxAgeDays)) && Number(query.maxAgeDays) > 0) { values.push(Number(query.maxAgeDays)); conditions.push(`l.published_at IS NOT NULL AND l.published_at >= now() - ($${values.length}::text || ' days')::interval`); }
   if (query.locationFit && ['excellent', 'good', 'possible', 'poor', 'unknown'].includes(query.locationFit)) { values.push(query.locationFit); conditions.push(`l.location_fit = $${values.length}`); }
   if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`l.remote_mode = $${values.length}`); }
   if (query.minLocationFit && Number.isFinite(Number(query.minLocationFit)) && Number(query.minLocationFit) > 0) { values.push(Number(query.minLocationFit)); conditions.push(`l.location_fit_score >= $${values.length}`); }
@@ -104,12 +105,23 @@ app.get('/api/listings', async (request) => {
   return { listings: result.rows, total: total.rows[0].count };
 });
 
-app.get('/api/listing-departments', async () => {
+app.get('/api/listing-departments', async (request) => {
+  const query = request.query as { q?: string; limit?: string };
+  const search = query.q?.trim() ?? '';
+  const limit = Math.min(50, Math.max(1, Number(query.limit) || 25));
+  const values: unknown[] = [];
+  const conditions = ['is_active=true', "department <> ''"];
+  if (search) { values.push(search); conditions.push(`department ILIKE '%' || $${values.length} || '%'`); }
+  values.push(limit);
+  const order = search
+    ? `ORDER BY CASE WHEN lower(department)=lower($1) THEN 0 ELSE 1 END, listing_count DESC, lower(department)`
+    : 'ORDER BY listing_count DESC, lower(department)';
   const result = await pool.query(`SELECT department, count(*)::int AS listing_count
     FROM job_listings
-    WHERE is_active=true AND department <> ''
+    WHERE ${conditions.join(' AND ')}
     GROUP BY department
-    ORDER BY lower(department), department`);
+    ${order}
+    LIMIT $${values.length}`, values);
   return { departments: result.rows };
 });
 
