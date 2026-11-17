@@ -80,11 +80,12 @@ function boardIdentifier(value: unknown, providerName: AtsProvider): string {
 }
 
 app.get('/api/listings', async (request) => {
-  const query = request.query as { provider?: string; status?: string; employer?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; locationFit?: string; workMode?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
+  const query = request.query as { provider?: string; status?: string; employer?: string; department?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; locationFit?: string; workMode?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
   const values: unknown[] = []; const conditions: string[] = [];
   if (provider(query.provider)) { values.push(query.provider); conditions.push(`l.provider = $${values.length}`); }
   if (query.status && listingStatuses.includes(query.status as JobListingStatus)) { values.push(query.status); conditions.push(`l.status = $${values.length}`); }
   if (query.employer) { values.push(`%${query.employer}%`); conditions.push(`e.name ILIKE $${values.length}`); }
+  if (query.department) { values.push(`%${query.department}%`); conditions.push(`l.department ILIKE $${values.length}`); }
   if (query.employmentType) { values.push(`%${query.employmentType}%`); conditions.push(`l.employment_type ILIKE $${values.length}`); }
   if (query.seniority) { values.push(`%${query.seniority}%`); conditions.push(`l.seniority ILIKE $${values.length}`); }
   if (query.location) { values.push(`%${query.location}%`); conditions.push(`(l.location ILIKE $${values.length} OR l.secondary_locations::text ILIKE $${values.length} OR l.geographic_restrictions::text ILIKE $${values.length})`); }
