@@ -82,22 +82,98 @@ async function request(url: string, init: RequestInit = {}, retries = 3, timeout
   throw new Error(`Request failed: ${url}`);
 }
 
+async function streamRequest(url: string, onChunk: (chunk: string) => Promise<void>, retries = 2, timeoutMs = 300_000) {
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    const wait = Math.max(0, 250 - (Date.now() - lastArchiveRequest));
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastArchiveRequest = Date.now();
+    try {
+      const response = await fetch(url, { headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status === 429 || response.status === 403 || response.status >= 500) {
+        if (attempt + 1 >= retries) throw new Error(`Archive returned HTTP ${response.status}`);
+        const retryAfter = Number(response.headers.get('retry-after'));
+        await new Promise((resolve) => setTimeout(resolve, Math.min(30_000, Number.isFinite(retryAfter) ? retryAfter * 1000 : 2 ** attempt * 1000)));
+        continue;
+      }
+      if (!response.ok || !response.body) throw new Error(`Archive returned HTTP ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        await onChunk(decoder.decode(next.value, { stream: true }));
+      }
+      const remainder = decoder.decode();
+      if (remainder) await onChunk(remainder);
+      return;
+    } catch (error) {
+      if (attempt + 1 >= retries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 1000));
+    }
+  }
+  throw new Error(`Archive request failed: ${url}`);
+}
+
+export async function consumeJsonArrayRows(chunk: string, state: { depth: number; inString: boolean; escaped: boolean; row?: string }, onRow: (row: unknown[]) => Promise<void>) {
+  for (const character of chunk) {
+    if (!state.row) {
+      if (character === '[') {
+        state.depth += 1;
+        if (state.depth === 2) state.row = '[';
+      }
+      continue;
+    }
+    state.row += character;
+    if (state.inString) {
+      if (state.escaped) state.escaped = false;
+      else if (character === '\\') state.escaped = true;
+      else if (character === '"') state.inString = false;
+      continue;
+    }
+    if (character === '"') state.inString = true;
+    else if (character === '[' || character === '{') state.depth += 1;
+    else if (character === ']' || character === '}') {
+      state.depth -= 1;
+      if (state.depth === 1) {
+        const row = JSON.parse(state.row) as unknown;
+        state.row = undefined;
+        await onRow(Array.isArray(row) ? row : []);
+      }
+    }
+  }
+}
+
 function addUrl(seen: Map<string, Candidate>, provider: DiscoveryProvider, url: string, source: string, metadata: Record<string, unknown> = {}) {
   const candidate = extractAtsBoardFromUrl(url); if (!candidate || candidate.provider !== provider) return;
   const key = `${provider}:${candidate.identifier.toLowerCase()}`;
   if (!seen.has(key)) seen.set(key, { ...candidate, source, metadata });
 }
 
-async function archiveCandidates(provider: DiscoveryProvider, mode: DiscoveryMode) {
+async function archiveCandidates(provider: DiscoveryProvider, mode: DiscoveryMode, jobId: string, onProgress: (progress: { archiveDomain: string; archiveRowsSeen: number; archiveCandidatesFound: number; archiveLastUrl?: string }) => Promise<void>) {
   const seen = new Map<string, Candidate>();
   const from = mode === 'recent' ? `&from=${new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10).replaceAll('-', '')}` : '';
+  let rowsSeen = 0;
   for (const domain of domains[provider]) {
     const endpoint = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(domain)}&matchType=domain&fl=original&collapse=urlkey&output=json&filter=statuscode:200${from}`;
-    const response = await request(endpoint, {}, 2, 300_000);
-    if (response.status >= 400) throw new Error(`Wayback returned HTTP ${response.status} for ${domain}`);
-    const rows = JSON.parse(response.body) as unknown;
-    if (!Array.isArray(rows)) continue;
-    for (const row of rows.slice(1)) if (Array.isArray(row) && typeof row[0] === 'string') addUrl(seen, provider, row[0], 'internet_archive_cdx', { domain, mode });
+    const state = { depth: 0, inString: false, escaped: false, row: undefined as string | undefined };
+    let pending: Candidate[] = [];
+    let header = true;
+    await onProgress({ archiveDomain: domain, archiveRowsSeen: rowsSeen, archiveCandidatesFound: seen.size });
+    const flush = async () => { for (const candidate of pending) await upsertCandidate(candidate, jobId); pending = []; };
+    await streamRequest(endpoint, async (chunk) => consumeJsonArrayRows(chunk, state, async (row) => {
+      rowsSeen += 1;
+      if (header) { header = false; return; }
+      const value = row[0];
+      if (typeof value === 'string') {
+        const before = seen.size;
+        addUrl(seen, provider, value, 'internet_archive_cdx', { domain, mode });
+        if (seen.size > before) pending.push(seen.get(`${provider}:${extractAtsBoardFromUrl(value)?.identifier.toLowerCase()}`)!);
+      }
+      if (pending.length >= 25) await flush();
+      if (rowsSeen % 100 === 0) await onProgress({ archiveDomain: domain, archiveRowsSeen: rowsSeen, archiveCandidatesFound: seen.size, archiveLastUrl: typeof value === 'string' ? value : undefined });
+    }));
+    await flush();
+    await onProgress({ archiveDomain: domain, archiveRowsSeen: rowsSeen, archiveCandidatesFound: seen.size });
   }
   if (mode === 'recent') {
     for (const domain of domains[provider]) {
@@ -189,8 +265,13 @@ async function runDiscoveryJob(jobId: string) {
       cursor.phase = 'collecting_archive';
       await updateJob(jobId, { cursor: JSON.stringify(cursor) });
       let candidates: Candidate[];
+      let streamed = false;
       try {
-        candidates = await archiveCandidates(provider, job.mode as DiscoveryMode);
+        candidates = await archiveCandidates(provider, job.mode as DiscoveryMode, jobId, async (progress) => {
+          Object.assign(cursor, progress);
+          await updateJob(jobId, { cursor: JSON.stringify(cursor) });
+        });
+        streamed = true;
       } catch (error) {
         try {
           candidates = await commonCrawlCandidates(provider);
@@ -200,7 +281,7 @@ async function runDiscoveryJob(jobId: string) {
         }
         if (!candidates.length) { collectionError = `${provider}: ${error instanceof Error ? error.message : String(error)}`; break; }
       }
-      for (const candidate of candidates) await upsertCandidate(candidate, jobId);
+      if (!streamed) for (const candidate of candidates) await upsertCandidate(candidate, jobId);
       cursor.collected = [...(cursor.collected ?? []), provider]; delete cursor.currentProvider; await updateJob(jobId, { cursor: JSON.stringify(cursor), request_count: Number(job.request_count) + candidates.length });
       await refreshJobCounts(jobId);
     }
