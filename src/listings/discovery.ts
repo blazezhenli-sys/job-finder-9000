@@ -19,6 +19,7 @@ const userAgent = 'hiring-signal-discovery-board-discovery/0.1 (public ATS disco
 let lastArchiveRequest = 0;
 let discoveryRunning = false;
 let opportunityListener: ((data: unknown) => void) | undefined;
+let discoveryRetryTimer: NodeJS.Timeout | undefined;
 
 function boardUrl(provider: DiscoveryProvider, identifier: string) {
   if (provider === 'greenhouse') return `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(identifier)}/jobs`;
@@ -58,13 +59,13 @@ export function extractAtsBoardsFromText(text: string): Candidate[] {
   return found;
 }
 
-async function request(url: string, init: RequestInit = {}, retries = 3): Promise<{ status: number; headers: Headers; body: string }> {
+async function request(url: string, init: RequestInit = {}, retries = 3, timeoutMs = 60_000): Promise<{ status: number; headers: Headers; body: string }> {
   for (let attempt = 0; attempt < retries; attempt += 1) {
     const wait = Math.max(0, 250 - (Date.now() - lastArchiveRequest));
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     lastArchiveRequest = Date.now();
     try {
-      const response = await fetch(url, { ...init, headers: { 'User-Agent': userAgent, Accept: 'application/json,text/plain', ...(init.headers ?? {}) }, signal: AbortSignal.timeout(60_000) });
+      const response = await fetch(url, { ...init, headers: { 'User-Agent': userAgent, Accept: 'application/json,text/plain', ...(init.headers ?? {}) }, signal: AbortSignal.timeout(timeoutMs) });
       const body = await response.text();
       if (response.status === 429 || response.status === 403 || response.status >= 500) {
         if (attempt + 1 >= retries) return { status: response.status, headers: response.headers, body };
@@ -92,7 +93,7 @@ async function archiveCandidates(provider: DiscoveryProvider, mode: DiscoveryMod
   const from = mode === 'recent' ? `&from=${new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10).replaceAll('-', '')}` : '';
   for (const domain of domains[provider]) {
     const endpoint = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(domain)}&matchType=domain&fl=original&collapse=urlkey&output=json&filter=statuscode:200${from}`;
-    const response = await request(endpoint, {}, 3);
+    const response = await request(endpoint, {}, 2, 300_000);
     if (response.status >= 400) throw new Error(`Wayback returned HTTP ${response.status} for ${domain}`);
     const rows = JSON.parse(response.body) as unknown;
     if (!Array.isArray(rows)) continue;
@@ -154,6 +155,11 @@ async function updateJob(jobId: string, values: Record<string, unknown>) {
   const assignments = Object.keys(values).map((key, index) => `${key}=$${index + 2}`); await pool.query(`UPDATE listing_discovery_jobs SET ${assignments.join(',')}, updated_at=now() WHERE id=$1`, [jobId, ...Object.values(values)]);
 }
 
+function scheduleDiscoveryRetry(delayMs = 60_000) {
+  if (discoveryRetryTimer) return;
+  discoveryRetryTimer = setTimeout(() => { discoveryRetryTimer = undefined; void runDiscoveryCycle().catch((error) => console.error('listing discovery retry failed', error)); }, delayMs);
+}
+
 async function refreshJobCounts(jobId: string) {
   const counts = await pool.query(`SELECT count(*)::int AS seen, count(*) FILTER (WHERE status IN ('validated','imported'))::int AS validated, count(*) FILTER (WHERE status='imported')::int AS imported FROM listing_discovery_candidates WHERE discovery_job_id=$1`, [jobId]);
   await updateJob(jobId, { candidates_seen: counts.rows[0].seen, candidates_validated: counts.rows[0].validated, boards_imported: counts.rows[0].imported });
@@ -162,6 +168,8 @@ async function refreshJobCounts(jobId: string) {
 export async function createDiscoveryJob(mode: DiscoveryMode = 'recent', selectedProviders: string[] = providers) {
   const active = await pool.query(`SELECT * FROM listing_discovery_jobs WHERE status IN ('queued','running') ORDER BY created_at LIMIT 1`);
   if (active.rows[0]) return active.rows[0];
+  const resumable = await pool.query(`SELECT j.* FROM listing_discovery_jobs j WHERE j.status='failed' AND EXISTS (SELECT 1 FROM listing_discovery_candidates c WHERE c.discovery_job_id=j.id AND c.status='candidate') ORDER BY j.updated_at DESC LIMIT 1`);
+  if (resumable.rows[0]) { await updateJob(resumable.rows[0].id, { status: 'queued', last_error: null }); return { ...resumable.rows[0], status: 'queued', last_error: null }; }
   const selected = selectedProviders.filter((value): value is DiscoveryProvider => providers.includes(value as DiscoveryProvider));
   const result = await pool.query(`INSERT INTO listing_discovery_jobs (mode, providers) VALUES ($1,$2) RETURNING *`, [mode, JSON.stringify(selected.length ? selected : providers)]);
   return result.rows[0];
@@ -174,13 +182,23 @@ async function runDiscoveryJob(jobId: string) {
   const cursor = (job.cursor ?? {}) as { collected?: string[]; postsExtracted?: boolean; currentProvider?: DiscoveryProvider };
   try {
     if (!cursor.postsExtracted) { await extractExistingOpportunityUrls(jobId); cursor.postsExtracted = true; await updateJob(jobId, { cursor: JSON.stringify(cursor) }); }
+    let collectionError: string | undefined;
     for (const provider of selected) {
       if (cursor.collected?.includes(provider)) continue;
       cursor.currentProvider = provider;
       await updateJob(jobId, { cursor: JSON.stringify(cursor) });
       let candidates: Candidate[];
-      try { candidates = await archiveCandidates(provider, job.mode as DiscoveryMode); }
-      catch (error) { candidates = await commonCrawlCandidates(provider); if (!candidates.length) throw error; }
+      try {
+        candidates = await archiveCandidates(provider, job.mode as DiscoveryMode);
+      } catch (error) {
+        try {
+          candidates = await commonCrawlCandidates(provider);
+        } catch (fallbackError) {
+          collectionError = `${provider}: ${fallbackError instanceof Error ? fallbackError.message : error instanceof Error ? error.message : String(error)}`;
+          break;
+        }
+        if (!candidates.length) { collectionError = `${provider}: ${error instanceof Error ? error.message : String(error)}`; break; }
+      }
       for (const candidate of candidates) await upsertCandidate(candidate, jobId);
       cursor.collected = [...(cursor.collected ?? []), provider]; delete cursor.currentProvider; await updateJob(jobId, { cursor: JSON.stringify(cursor), request_count: Number(job.request_count) + candidates.length });
       await refreshJobCounts(jobId);
@@ -193,9 +211,9 @@ async function runDiscoveryJob(jobId: string) {
     }
     await refreshJobCounts(jobId);
     const remaining = await pool.query(`SELECT count(*)::int AS count FROM listing_discovery_candidates WHERE discovery_job_id=$1 AND status='candidate'`, [jobId]);
-    if (remaining.rows[0].count === 0 && selected.every((value) => cursor.collected?.includes(value))) await updateJob(jobId, { status: 'completed', finished_at: new Date(), error_count: errors });
-    else await updateJob(jobId, { status: 'queued', error_count: errors });
-    events.emit('listing-discovery', { jobId, status: remaining.rows[0].count === 0 ? 'completed' : 'queued' });
+    if (remaining.rows[0].count === 0 && !collectionError && selected.every((value) => cursor.collected?.includes(value))) await updateJob(jobId, { status: 'completed', finished_at: new Date(), error_count: errors, last_error: null });
+    else { await updateJob(jobId, { status: 'queued', error_count: errors, last_error: collectionError ?? null }); scheduleDiscoveryRetry(); }
+    events.emit('listing-discovery', { jobId, status: remaining.rows[0].count === 0 && !collectionError ? 'completed' : 'queued' });
   } catch (error) {
     await updateJob(jobId, { status: 'failed', last_error: error instanceof Error ? error.message : String(error), error_count: Number(job.error_count) + 1 });
     events.emit('listing-discovery', { jobId, status: 'failed' });
@@ -203,6 +221,7 @@ async function runDiscoveryJob(jobId: string) {
 }
 
 async function runDiscoveryCycle() {
+  if (discoveryRetryTimer) { clearTimeout(discoveryRetryTimer); discoveryRetryTimer = undefined; }
   if (discoveryRunning) return; discoveryRunning = true;
   try {
     const active = await pool.query(`SELECT * FROM listing_discovery_jobs WHERE status IN ('queued','running') ORDER BY created_at LIMIT 1`);
