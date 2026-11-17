@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { getPreferences, getRules, migrate, pool, setPreferences, withTransaction } from './db.js';
 import { sendTestEmail } from './notifications.js';
 import { events, processPost } from './pipeline-service.js';
+import { createDiscoveryJob, getDiscoveryJobs } from './listings/discovery.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 
 const app = Fastify({ logger: true });
@@ -143,6 +144,24 @@ app.patch('/api/job-boards/:id', async (request, reply) => {
 
 app.delete('/api/job-boards/:id', async (request) => { await pool.query(`UPDATE job_boards SET status='disabled', updated_at=now() WHERE id=$1`, [(request.params as { id: string }).id]); return { ok: true }; });
 
+app.get('/api/listing-discovery/jobs', async (request) => ({ jobs: await getDiscoveryJobs(Number((request.query as { limit?: string }).limit) || 20) }));
+
+app.get('/api/listing-discovery/candidates', async (request) => {
+  const query = request.query as { status?: string; provider?: string; limit?: string };
+  const values: unknown[] = []; const conditions: string[] = [];
+  if (query.status && ['candidate', 'validated', 'rejected', 'imported'].includes(query.status)) { values.push(query.status); conditions.push(`status=$${values.length}`); }
+  if (query.provider && atsProviders.includes(query.provider as AtsProvider)) { values.push(query.provider); conditions.push(`provider=$${values.length}`); }
+  values.push(Math.min(500, Math.max(1, Number(query.limit) || 100)));
+  return { candidates: (await pool.query(`SELECT * FROM listing_discovery_candidates ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY updated_at DESC LIMIT $${values.length}`, values)).rows };
+});
+
+app.post('/api/listing-discovery/jobs', async (request, reply) => {
+  const body = request.body as { mode?: string; providers?: string[] };
+  if (body.mode && !['full', 'recent'].includes(body.mode)) return reply.code(400).send({ error: 'mode must be full or recent' });
+  const mode = body.mode === 'full' ? 'full' : 'recent';
+  return reply.code(202).send(await createDiscoveryJob(mode, body.providers ?? ['greenhouse', 'ashby', 'lever']));
+});
+
 app.patch('/api/opportunities/:id', async (request, reply) => {
   const body = request.body as { status?: OpportunityStatus; signal_category?: SignalCategory; suppressed?: boolean };
   if (body.status && !['unread', 'interesting', 'dismissed', 'contacted'].includes(body.status)) return reply.code(400).send({ error: 'Invalid status' });
@@ -263,7 +282,8 @@ app.get('/api/monitoring', async () => {
   const listingBoards = await pool.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE status='active')::int AS active, count(*) FILTER (WHERE last_successful_poll IS NOT NULL)::int AS polled, count(*) FILTER (WHERE consecutive_failure_count > 0)::int AS failing FROM job_boards`);
   const listingCounts = await pool.query(`SELECT count(*) FILTER (WHERE is_active)::int AS active, count(*) FILTER (WHERE status='saved')::int AS saved, count(*) FILTER (WHERE status='applied')::int AS applied, count(*) FILTER (WHERE status='dismissed')::int AS dismissed, count(*) FILTER (WHERE location_fit IN ('excellent','good'))::int AS good_location FROM job_listings`);
   const listingNotifications = await pool.query(`SELECT count(*) FILTER (WHERE status='sent')::int AS sent, count(*) FILTER (WHERE status IN ('pending','failed'))::int AS pending, count(*) FILTER (WHERE status='failed')::int AS failed FROM listing_notifications`);
-  return { sources: states.rows, notifications: notification.rows[0], listingBoards: listingBoards.rows[0], listingCounts: listingCounts.rows[0], listingNotifications: listingNotifications.rows[0], smtpConfigured: Boolean(config.smtp.host && config.smtp.from && config.smtp.recipient) };
+  const discovery = await pool.query(`SELECT j.*, (SELECT count(*)::int FROM listing_discovery_candidates c WHERE c.discovery_job_id=j.id) AS candidate_count, (SELECT count(*)::int FROM listing_discovery_candidates c WHERE c.discovery_job_id=j.id AND c.status='imported') AS imported_count FROM listing_discovery_jobs j ORDER BY j.created_at DESC LIMIT 1`);
+  return { sources: states.rows, notifications: notification.rows[0], listingBoards: listingBoards.rows[0], listingCounts: listingCounts.rows[0], listingNotifications: listingNotifications.rows[0], discovery: discovery.rows[0] ?? null, smtpConfigured: Boolean(config.smtp.host && config.smtp.from && config.smtp.recipient) };
 });
 
 app.get('/api/events', async (request, reply) => {
@@ -274,9 +294,10 @@ app.get('/api/events', async (request, reply) => {
   const opportunity = (data: unknown) => send('opportunity', data);
   const health = (data: unknown) => send('health', data);
   const listings = (data: unknown) => send('listings', data);
-  events.on('opportunity', opportunity); events.on('health', health); events.on('listings', listings); events.on('listing-health', health);
+  const discovery = (data: unknown) => send('listing-discovery', data);
+  events.on('opportunity', opportunity); events.on('health', health); events.on('listings', listings); events.on('listing-health', health); events.on('listing-discovery', discovery);
   const heartbeat = setInterval(() => response.write(': heartbeat\n\n'), 15_000);
-  request.raw.on('close', () => { clearInterval(heartbeat); events.off('opportunity', opportunity); events.off('health', health); events.off('listings', listings); events.off('listing-health', health); });
+  request.raw.on('close', () => { clearInterval(heartbeat); events.off('opportunity', opportunity); events.off('health', health); events.off('listings', listings); events.off('listing-health', health); events.off('listing-discovery', discovery); });
 });
 
 app.post('/api/dev/sample', async (_request, reply) => {
