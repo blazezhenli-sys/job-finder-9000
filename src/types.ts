@@ -5,7 +5,7 @@ export type AuthorClassification = 'unknown' | 'aggregator' | 'employer' | 'legi
 export type WorkMode = 'remote' | 'hybrid' | 'onsite' | 'unknown';
 export type LocationConstraint = 'allowed' | 'restricted' | 'unknown';
 export type LocationFit = 'excellent' | 'good' | 'possible' | 'poor' | 'unknown';
-export type AtsProvider = 'greenhouse' | 'ashby' | 'lever';
+export type AtsProvider = 'greenhouse' | 'ashby' | 'lever' | 'remotive' | 'adzuna';
 export type BoardStatus = 'active' | 'disabled';
 export type JobListingStatus = 'new' | 'saved' | 'dismissed' | 'applied';
 
@@ -139,6 +139,7 @@ export interface JobBoard {
 export interface NormalizedJobListing {
   providerJobId: string;
   title: string;
+  companyName?: string;
   descriptionHtml?: string;
   description: string;
   department?: string;

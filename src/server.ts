@@ -60,7 +60,7 @@ app.get('/api/opportunities/:id', async (request, reply) => {
   return result.rows[0];
 });
 
-const atsProviders: AtsProvider[] = ['greenhouse', 'ashby', 'lever'];
+const atsProviders: AtsProvider[] = ['greenhouse', 'ashby', 'lever', 'remotive', 'adzuna'];
 const listingStatuses: JobListingStatus[] = ['new', 'saved', 'dismissed', 'applied'];
 function provider(value: unknown): value is AtsProvider { return typeof value === 'string' && atsProviders.includes(value as AtsProvider); }
 function boardIdentifier(value: unknown, providerName: AtsProvider): string {
@@ -70,6 +70,8 @@ function boardIdentifier(value: unknown, providerName: AtsProvider): string {
   if (parts.length === 1) return raw;
   if (providerName === 'greenhouse' && parts[0] === 'boards.greenhouse.io') return parts[1] ?? '';
   if (providerName === 'ashby' && parts[0] === 'jobs.ashbyhq.com') return parts[1] ?? '';
+  if (providerName === 'remotive') return 'remote-jobs';
+  if (providerName === 'adzuna') return parts.at(-1) ?? '';
   if (providerName === 'greenhouse' && parts.includes('job_board')) return parts[parts.indexOf('job_board') + 1] ?? '';
   if (providerName === 'ashby' && parts.includes('job-board')) return parts[parts.indexOf('job-board') + 1] ?? '';
   if (providerName === 'lever' && parts[0] === 'jobs.lever.co') return parts[1] ?? '';
@@ -120,7 +122,8 @@ app.post('/api/job-boards', async (request, reply) => {
   const employerName = body.employerName.trim();
   const board = await withTransaction(async (client) => {
     const employer = await client.query(`INSERT INTO employers (name, website) VALUES ($1,$2) ON CONFLICT (name, website) DO UPDATE SET updated_at=now() RETURNING id`, [employerName, body.companyWebsite?.trim() ?? '']);
-    const result = await client.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source, polling_interval_seconds) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (provider, board_identifier) DO UPDATE SET employer_id=EXCLUDED.employer_id, board_url=EXCLUDED.board_url, discovery_source=EXCLUDED.discovery_source, polling_interval_seconds=EXCLUDED.polling_interval_seconds, status='active', updated_at=now() RETURNING *`, [employer.rows[0].id, body.provider, identifier, body.boardUrl?.trim() || `https://${body.provider === 'greenhouse' ? 'boards.greenhouse.io' : body.provider === 'ashby' ? 'jobs.ashbyhq.com' : 'jobs.lever.co'}/${identifier}`, body.discoverySource?.trim() || 'manual', Math.max(60, Number(body.pollingIntervalSeconds) || 900)]);
+    const host = body.provider === 'greenhouse' ? 'boards.greenhouse.io' : body.provider === 'ashby' ? 'jobs.ashbyhq.com' : body.provider === 'lever' ? 'jobs.lever.co' : body.provider === 'remotive' ? 'remotive.com/remote-jobs' : 'adzuna.com';
+    const result = await client.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source, polling_interval_seconds) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (provider, board_identifier) DO UPDATE SET employer_id=EXCLUDED.employer_id, board_url=EXCLUDED.board_url, discovery_source=EXCLUDED.discovery_source, polling_interval_seconds=EXCLUDED.polling_interval_seconds, status='active', updated_at=now() RETURNING *`, [employer.rows[0].id, body.provider, identifier, body.boardUrl?.trim() || `https://${host}/${identifier}`, body.discoverySource?.trim() || 'manual', Math.max(60, Number(body.pollingIntervalSeconds) || 900)]);
     return result.rows[0];
   });
   return reply.code(201).send(board);

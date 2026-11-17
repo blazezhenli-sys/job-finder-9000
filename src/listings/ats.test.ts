@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseAshbyJobs, parseGreenhouseJobs, parseLeverJobs, stripListingHtml } from './ats.js';
+import { parseAdzunaJobs, parseAshbyJobs, parseGreenhouseJobs, parseLeverJobs, parseRemotiveJobs, stripListingHtml } from './ats.js';
 
 describe('ATS adapters', () => {
   it('normalizes Greenhouse postings and preserves the apply link', () => {
@@ -26,5 +26,17 @@ describe('ATS adapters', () => {
     expect(job.seniority).toBe('Senior');
     expect(job.remoteMode).toBe('remote');
     expect(stripListingHtml('&lt;p&gt;One&nbsp;two&lt;/p&gt;')).toBe('One two');
+  });
+
+  it('normalizes aggregator postings with employer and geographic restriction data', () => {
+    const [remotive] = parseRemotiveJobs({ jobs: [{ id: 7, title: 'Remote TypeScript Engineer', company_name: 'Example Co', description: '<p>Work anywhere in Europe</p>', url: 'https://remotive.com/jobs/7', candidate_required_location: 'Europe', job_type: 'full_time', publication_date: '2026-11-17T00:00:00Z' }] });
+    expect(remotive.companyName).toBe('Example Co');
+    expect(remotive.remoteMode).toBe('remote');
+    expect(remotive.geographicRestrictions).toEqual(['Europe']);
+
+    const [adzuna] = parseAdzunaJobs({ results: [{ id: 'a-1', title: 'Backend Developer', description: 'Remote role', redirect_url: 'https://jobs.example/1', company: { display_name: 'Adzuna Co' }, location: { display_name: 'Singapore' }, contract_time: 'full_time' }] });
+    expect(adzuna.companyName).toBe('Adzuna Co');
+    expect(adzuna.location).toBe('Singapore');
+    expect(adzuna.applicationUrl).toContain('/1');
   });
 });

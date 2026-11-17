@@ -1,4 +1,5 @@
 import type { AtsProvider, JobBoard, NormalizedJobListing, WorkMode } from '../types.js';
+import { config } from '../config.js';
 
 export interface AtsAdapter {
   provider: AtsProvider;
@@ -72,6 +73,26 @@ export function parseLeverJobs(payload: unknown): NormalizedJobListing[] {
   });
 }
 
+export function parseRemotiveJobs(payload: unknown): NormalizedJobListing[] {
+  const jobs = Array.isArray((payload as { jobs?: unknown[] })?.jobs) ? (payload as { jobs: Record<string, unknown>[] }).jobs : [];
+  return jobs.filter((job) => job.id != null && stringValue(job.title) && stringValue(job.url)).map((job) => {
+    const location = stringValue(job.candidate_required_location);
+    const description = stripListingHtml(stringValue(job.description));
+    return { providerJobId: String(job.id), companyName: stringValue(job.company_name), title: stringValue(job.title), descriptionHtml: stringValue(job.description), description, department: stringValue(job.category), secondaryLocations: Array.isArray(job.tags) ? job.tags.map(stringValue).filter(Boolean) : [], location, geographicRestrictions: location ? [location] : [], remoteMode: 'remote', employmentType: stringValue(job.job_type), compensation: stringValue(job.salary) ? { description: stringValue(job.salary) } : undefined, applicationUrl: stringValue(job.url), originalUrl: stringValue(job.url), publishedAt: date(job.publication_date), updatedAt: date(job.publication_date), raw: job };
+  });
+}
+
+export function parseAdzunaJobs(payload: unknown): NormalizedJobListing[] {
+  const jobs = Array.isArray((payload as { results?: unknown[] })?.results) ? (payload as { results: Record<string, unknown>[] }).results : [];
+  return jobs.filter((job) => stringValue(job.id) && stringValue(job.title) && stringValue(job.redirect_url)).map((job) => {
+    const location = stringValue((job.location as { display_name?: unknown } | undefined)?.display_name ?? job.location);
+    const company = stringValue((job.company as { display_name?: unknown } | undefined)?.display_name ?? job.company);
+    const salary = { min: job.salary_min, max: job.salary_max, currency: job.salary_currency, period: job.salary_is_predicted ? 'estimated' : undefined };
+    const description = stripListingHtml(stringValue(job.description));
+    return { providerJobId: String(job.id), companyName: company, title: stringValue(job.title), descriptionHtml: stringValue(job.description), description, department: stringValue((job.category as { label?: unknown } | undefined)?.label), location, geographicRestrictions: location ? [location] : [], remoteMode: workMode([location, description].join('\n')), employmentType: [stringValue(job.contract_time), stringValue(job.contract_type)].filter(Boolean).join(' · '), compensation: Object.values(salary).some(Boolean) ? salary : undefined, applicationUrl: stringValue(job.redirect_url), originalUrl: stringValue(job.redirect_url), publishedAt: date(job.created), updatedAt: date(job.created), raw: job };
+  });
+}
+
 export class GreenhouseAdapter implements AtsAdapter {
   readonly provider = 'greenhouse' as const;
   async fetch(board: JobBoard) { return parseGreenhouseJobs(await json(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(board.boardIdentifier)}/jobs?content=true`)); }
@@ -90,4 +111,19 @@ export class LeverAdapter implements AtsAdapter {
   }
 }
 
-export function adapterFor(provider: AtsProvider): AtsAdapter { return provider === 'greenhouse' ? new GreenhouseAdapter() : provider === 'ashby' ? new AshbyAdapter() : new LeverAdapter(); }
+export class RemotiveAdapter implements AtsAdapter {
+  readonly provider = 'remotive' as const;
+  async fetch(board: JobBoard) { return parseRemotiveJobs(await json(`https://remotive.com/api/remote-jobs?limit=100`)); }
+}
+
+export class AdzunaAdapter implements AtsAdapter {
+  readonly provider = 'adzuna' as const;
+  async fetch(board: JobBoard) {
+    if (!config.adzunaAppId || !config.adzunaAppKey) throw new Error('ADZUNA_APP_ID and ADZUNA_APP_KEY are required');
+    const params = new URLSearchParams({ app_id: config.adzunaAppId, app_key: config.adzunaAppKey, results_per_page: '100', what: config.adzunaQuery, 'content-type': 'application/json' });
+    if (config.adzunaWhere) params.set('where', config.adzunaWhere);
+    return parseAdzunaJobs(await json(`https://api.adzuna.com/v1/api/jobs/${encodeURIComponent(board.boardIdentifier)}/search/1?${params}`));
+  }
+}
+
+export function adapterFor(provider: AtsProvider): AtsAdapter { return provider === 'greenhouse' ? new GreenhouseAdapter() : provider === 'ashby' ? new AshbyAdapter() : provider === 'lever' ? new LeverAdapter() : provider === 'remotive' ? new RemotiveAdapter() : new AdzunaAdapter(); }
