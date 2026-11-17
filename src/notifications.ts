@@ -5,6 +5,7 @@ import { getPreferences, pool } from './db.js';
 const backoff = (attempts: number) => Math.min(6 * 60 * 60 * 1000, 30_000 * (2 ** Math.min(attempts, 8)));
 
 async function deliverPostNotifications() {
+  if (!config.enablePosts) return;
   if (!config.smtp.host || !config.smtp.recipient || !config.smtp.from) return;
   const preferences = await getPreferences();
   if (!preferences.notificationsEnabled) return;

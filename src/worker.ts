@@ -19,12 +19,14 @@ export async function startWorkers() {
   if (started) return;
   started = true;
   await migrate();
-  const reclassified = await reclassifyExistingOpportunities(true);
-  if (reclassified) console.info(`Reclassified ${reclassified} historical opportunities without notifying`);
-  if (config.enableBluesky) sources.push(new BlueskySource());
-  if (config.enableHackerNews) sources.push(new HackerNewsSource());
-  if (config.enableMastodon) sources.push(new MastodonSource());
-  if (config.enableReddit) sources.push(new RedditSource());
+  if (config.enablePosts) {
+    const reclassified = await reclassifyExistingOpportunities(true);
+    if (reclassified) console.info(`Reclassified ${reclassified} historical opportunities without notifying`);
+    if (config.enableBluesky) sources.push(new BlueskySource());
+    if (config.enableHackerNews) sources.push(new HackerNewsSource());
+    if (config.enableMastodon) sources.push(new MastodonSource());
+    if (config.enableReddit) sources.push(new RedditSource());
+  }
   for (const source of sources) {
     void source.start(processPost, (health) => void updateHealth(source.source, health));
   }
