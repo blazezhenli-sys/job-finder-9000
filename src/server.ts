@@ -89,11 +89,11 @@ app.get('/api/listings', async (request) => {
   if (query.seniority) { values.push(`%${query.seniority}%`); conditions.push(`l.seniority ILIKE $${values.length}`); }
   if (query.location) { values.push(`%${query.location}%`); conditions.push(`(l.location ILIKE $${values.length} OR l.secondary_locations::text ILIKE $${values.length} OR l.geographic_restrictions::text ILIKE $${values.length})`); }
   if (query.salaryCurrency) { values.push(query.salaryCurrency.toUpperCase()); conditions.push(`l.compensation_currency = $${values.length}`); }
-  if (query.minSalary && Number.isFinite(Number(query.minSalary))) { values.push(Number(query.minSalary)); conditions.push(`COALESCE(l.compensation_max, l.compensation_min) >= $${values.length}`); }
+  if (query.minSalary && Number.isFinite(Number(query.minSalary)) && Number(query.minSalary) > 0) { values.push(Number(query.minSalary)); conditions.push(`COALESCE(l.compensation_max, l.compensation_min) >= $${values.length}`); }
   if (query.locationFit && ['excellent', 'good', 'possible', 'poor', 'unknown'].includes(query.locationFit)) { values.push(query.locationFit); conditions.push(`l.location_fit = $${values.length}`); }
   if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`l.remote_mode = $${values.length}`); }
-  if (query.minScore && Number.isFinite(Number(query.minScore))) { values.push(Number(query.minScore)); conditions.push(`l.personal_relevance >= $${values.length}`); }
-  if (query.minLocationFit && Number.isFinite(Number(query.minLocationFit))) { values.push(Number(query.minLocationFit)); conditions.push(`l.location_fit_score >= $${values.length}`); }
+  if (query.minScore && Number.isFinite(Number(query.minScore)) && Number(query.minScore) > 0) { values.push(Number(query.minScore)); conditions.push(`l.personal_relevance >= $${values.length}`); }
+  if (query.minLocationFit && Number.isFinite(Number(query.minLocationFit)) && Number(query.minLocationFit) > 0) { values.push(Number(query.minLocationFit)); conditions.push(`l.location_fit_score >= $${values.length}`); }
   if (query.active !== 'false') conditions.push('l.is_active = true');
   const sort = query.sort === 'location' ? 'l.location_fit_score DESC, l.personal_relevance DESC, l.source_updated_at DESC NULLS LAST' : query.sort === 'relevance' ? 'l.personal_relevance DESC, l.location_fit_score DESC, l.source_updated_at DESC NULLS LAST' : query.sort === 'updated' ? 'l.source_updated_at DESC NULLS LAST' : 'l.first_observed_at DESC';
   const limit = Math.min(200, Math.max(1, Number(query.limit) || 100)); const offset = Math.max(0, Number(query.offset) || 0);
