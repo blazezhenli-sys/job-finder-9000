@@ -7,6 +7,19 @@ import { events } from '../pipeline-service.js';
 
 let polling = false;
 
+async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
+  let nextIndex = 0;
+  const workerCount = Math.min(items.length, Math.max(1, concurrency));
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      await worker(items[index]);
+    }
+  }));
+}
+
 async function boardRows(): Promise<JobBoard[]> {
   const result = await pool.query(`SELECT b.*, e.name AS employer_name, e.website AS company_website
     FROM job_boards b JOIN employers e ON e.id = b.employer_id WHERE b.status = 'active'
@@ -115,13 +128,13 @@ export async function pollListings() {
       if (taskId) queued.push({ board, taskId });
     }
     if (queued.length) events.emit('listing-task', { status: 'queued', count: queued.length });
-    for (const { board, taskId } of queued) {
+    await runWithConcurrency(queued, config.listingsPollConcurrency, async ({ board, taskId }) => {
       try { await processBoard(board, preferences, taskId); }
       catch (error) {
         const message = await markFailure(board, error);
         await finishPollTask(taskId, { status: 'failed', listingsSeen: 0, newListings: 0, error: message });
       }
-    }
+    });
   }
   finally { polling = false; }
 }

@@ -17,6 +17,7 @@ const junk = new Set(['_next', 'api', 'static', 'assets', 'meeting', 'b', 'favic
 const slugShape = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,60}$/;
 const userAgent = 'hiring-signal-discovery-board-discovery/0.1 (public ATS discovery)';
 let lastArchiveRequest = 0;
+let requestGate = Promise.resolve();
 let discoveryRunning = false;
 let opportunityListener: ((data: unknown) => void) | undefined;
 let discoveryRetryTimer: NodeJS.Timeout | undefined;
@@ -61,9 +62,7 @@ export function extractAtsBoardsFromText(text: string): Candidate[] {
 
 async function request(url: string, init: RequestInit = {}, retries = 3, timeoutMs = 60_000): Promise<{ status: number; headers: Headers; body: string }> {
   for (let attempt = 0; attempt < retries; attempt += 1) {
-    const wait = Math.max(0, 250 - (Date.now() - lastArchiveRequest));
-    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
-    lastArchiveRequest = Date.now();
+    await waitForRequestSlot();
     try {
       const response = await fetch(url, { ...init, headers: { 'User-Agent': userAgent, Accept: 'application/json,text/plain', ...(init.headers ?? {}) }, signal: AbortSignal.timeout(timeoutMs) });
       const body = await response.text();
@@ -84,9 +83,7 @@ async function request(url: string, init: RequestInit = {}, retries = 3, timeout
 
 async function streamRequest(url: string, onChunk: (chunk: string) => Promise<void>, retries = 2, timeoutMs = 300_000) {
   for (let attempt = 0; attempt < retries; attempt += 1) {
-    const wait = Math.max(0, 250 - (Date.now() - lastArchiveRequest));
-    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
-    lastArchiveRequest = Date.now();
+    await waitForRequestSlot();
     try {
       const response = await fetch(url, { headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
       if (response.status === 429 || response.status === 403 || response.status >= 500) {
@@ -112,6 +109,30 @@ async function streamRequest(url: string, onChunk: (chunk: string) => Promise<vo
     }
   }
   throw new Error(`Archive request failed: ${url}`);
+}
+
+async function waitForRequestSlot() {
+  let release!: () => void;
+  const previous = requestGate;
+  requestGate = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  const wait = Math.max(0, 250 - (Date.now() - lastArchiveRequest));
+  if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastArchiveRequest = Date.now();
+  release();
+}
+
+async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
+  let nextIndex = 0;
+  const workerCount = Math.min(items.length, Math.max(1, concurrency));
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      await worker(items[index]);
+    }
+  }));
 }
 
 export async function consumeJsonArrayRows(chunk: string, state: { depth: number; inString: boolean; escaped: boolean; row?: string }, onRow: (row: unknown[]) => Promise<void>) {
@@ -289,11 +310,23 @@ async function runDiscoveryJob(jobId: string) {
     const candidates = await pool.query(`SELECT id, provider, board_identifier, board_url, employer_name, discovery_source, validation_attempts FROM listing_discovery_candidates WHERE discovery_job_id=$1 AND status='candidate' AND next_validation_at <= now() ORDER BY created_at LIMIT 200`, [jobId]);
     cursor.phase = 'validating'; cursor.validationProcessed = 0; cursor.validationTotal = candidates.rows.length; await updateJob(jobId, { cursor: JSON.stringify(cursor) });
     let errors = 0;
-    for (let index = 0; index < candidates.rows.length; index += 4) {
-      const batch = candidates.rows.slice(index, index + 4); await Promise.all(batch.map((row) => validateCandidate(row).catch(() => { errors += 1; return false; })));
-      cursor.validationProcessed = index + batch.length;
-      if (index % 20 === 0 || cursor.validationProcessed >= candidates.rows.length) { await refreshJobCounts(jobId); await updateJob(jobId, { cursor: JSON.stringify(cursor) }); }
-    }
+    let completed = 0;
+    let progressWrite = Promise.resolve();
+    await runWithConcurrency(candidates.rows, config.listingDiscoveryValidationConcurrency, async (row) => {
+      try { await validateCandidate(row); }
+      catch { errors += 1; }
+      completed += 1;
+      if (completed % 20 === 0 || completed === candidates.rows.length) {
+        const processed = completed;
+        progressWrite = progressWrite.then(async () => {
+          cursor.validationProcessed = processed;
+          await refreshJobCounts(jobId);
+          await updateJob(jobId, { cursor: JSON.stringify(cursor) });
+        });
+        await progressWrite;
+      }
+    });
+    await progressWrite;
     await refreshJobCounts(jobId);
     const remaining = await pool.query(`SELECT count(*)::int AS count FROM listing_discovery_candidates WHERE discovery_job_id=$1 AND status='candidate'`, [jobId]);
     if (remaining.rows[0].count === 0 && !collectionError && selected.every((value) => cursor.collected?.includes(value))) { cursor.phase = 'completed'; await updateJob(jobId, { status: 'completed', finished_at: new Date(), error_count: errors, last_error: null, cursor: JSON.stringify(cursor) }); }
