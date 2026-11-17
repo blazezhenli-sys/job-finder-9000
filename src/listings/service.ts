@@ -33,21 +33,44 @@ async function ensureAggregatorBoards() {
 }
 
 function notificationEligible(analysis: ReturnType<typeof analyzeListing>, preferences: Awaited<ReturnType<typeof getPreferences>>) {
-  return preferences.listingsNotificationsEnabled && analysis.personalRelevance >= preferences.minimumListingRelevance && analysis.locationFitScore >= preferences.minimumListingLocationFitScore;
+  return preferences.listingsNotificationsEnabled && analysis.locationFitScore >= preferences.minimumListingLocationFitScore;
 }
 
-async function markFailure(board: JobBoard, error: unknown) {
+type PollTaskResult = { status: 'completed' | 'failed'; listingsSeen: number; newListings: number; error?: string };
+
+async function finishPollTask(taskId: string, result: PollTaskResult) {
+  await pool.query(`UPDATE listing_poll_tasks
+    SET status=$2, completed_at=now(), listings_seen=$3, new_listings=$4, error=$5
+    WHERE id=$1`, [taskId, result.status, result.listingsSeen, result.newListings, result.error ?? null]);
+  events.emit('listing-task', { taskId, ...result });
+}
+
+async function queuePollTask(board: JobBoard): Promise<string | null> {
+  const result = await pool.query(`INSERT INTO listing_poll_tasks (board_id, status)
+    VALUES ($1, 'queued') ON CONFLICT DO NOTHING RETURNING id`, [board.id]);
+  return result.rows[0]?.id ?? null;
+}
+
+async function markFailure(board: JobBoard, error: unknown): Promise<string> {
   const message = error instanceof Error ? error.message : String(error);
   await pool.query(`UPDATE job_boards SET last_attempted_poll=now(), consecutive_failure_count=consecutive_failure_count+1, last_error=$2, updated_at=now() WHERE id=$1`, [board.id, message]);
   events.emit('listing-health', { boardId: board.id, provider: board.provider, error: message });
+  return message;
 }
 
-async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typeof getPreferences>>) {
+async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typeof getPreferences>>, taskId: string): Promise<PollTaskResult> {
+  await pool.query(`UPDATE listing_poll_tasks SET status='running', started_at=now() WHERE id=$1`, [taskId]);
+  events.emit('listing-task', { taskId, status: 'running', boardId: board.id, provider: board.provider, boardIdentifier: board.boardIdentifier });
   const adapter = adapterFor(board.provider);
   await pool.query('UPDATE job_boards SET last_attempted_poll=now(), updated_at=now() WHERE id=$1', [board.id]);
   let listings: NormalizedJobListing[];
   try { listings = await adapter.fetch(board); }
-  catch (error) { await markFailure(board, error); return; }
+  catch (error) {
+    const message = await markFailure(board, error);
+    const result = { status: 'failed' as const, listingsSeen: 0, newListings: 0, error: message };
+    await finishPollTask(taskId, result);
+    return result;
+  }
   const observedIds = listings.map((listing) => listing.providerJobId);
   const existing = await pool.query('SELECT id, provider_job_id, first_observed_at FROM job_listings WHERE board_id=$1', [board.id]);
   const existingIds = new Set(existing.rows.map((row) => row.provider_job_id as string));
@@ -71,7 +94,10 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
       WHERE board_id=$1 AND is_active=true AND NOT (provider_job_id = ANY($2::text[]))`, [board.id, observedIds]);
     await client.query(`UPDATE job_boards SET initialized_at=COALESCE(initialized_at, now()), last_successful_poll=now(), last_attempted_poll=now(), last_new_listing_discovered=CASE WHEN $2 > 0 THEN now() ELSE last_new_listing_discovered END, consecutive_failure_count=0, last_error=NULL, updated_at=now() WHERE id=$1`, [board.id, newCount]);
   });
+  const result = { status: 'completed' as const, listingsSeen: listings.length, newListings: newCount };
+  await finishPollTask(taskId, result);
   events.emit('listings', { boardId: board.id, provider: board.provider, newCount, count: listings.length });
+  return result;
 }
 
 export async function pollListings() {
@@ -79,10 +105,22 @@ export async function pollListings() {
   polling = true;
   try {
     await ensureAggregatorBoards();
+    await pool.query(`UPDATE listing_poll_tasks
+      SET status='failed', completed_at=now(), error=COALESCE(error, 'Poller stopped before task completed')
+      WHERE status IN ('queued', 'running')`);
     const preferences = await getPreferences();
+    const queued = [];
     for (const board of await boardRows()) {
-      try { await processBoard(board, preferences); }
-      catch (error) { await markFailure(board, error); }
+      const taskId = await queuePollTask(board);
+      if (taskId) queued.push({ board, taskId });
+    }
+    if (queued.length) events.emit('listing-task', { status: 'queued', count: queued.length });
+    for (const { board, taskId } of queued) {
+      try { await processBoard(board, preferences, taskId); }
+      catch (error) {
+        const message = await markFailure(board, error);
+        await finishPollTask(taskId, { status: 'failed', listingsSeen: 0, newListings: 0, error: message });
+      }
     }
   }
   finally { polling = false; }

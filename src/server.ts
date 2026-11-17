@@ -80,7 +80,7 @@ function boardIdentifier(value: unknown, providerName: AtsProvider): string {
 }
 
 app.get('/api/listings', async (request) => {
-  const query = request.query as { provider?: string; status?: string; employer?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; locationFit?: string; workMode?: string; minScore?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
+  const query = request.query as { provider?: string; status?: string; employer?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; locationFit?: string; workMode?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
   const values: unknown[] = []; const conditions: string[] = [];
   if (provider(query.provider)) { values.push(query.provider); conditions.push(`l.provider = $${values.length}`); }
   if (query.status && listingStatuses.includes(query.status as JobListingStatus)) { values.push(query.status); conditions.push(`l.status = $${values.length}`); }
@@ -92,10 +92,9 @@ app.get('/api/listings', async (request) => {
   if (query.minSalary && Number.isFinite(Number(query.minSalary)) && Number(query.minSalary) > 0) { values.push(Number(query.minSalary)); conditions.push(`COALESCE(l.compensation_max, l.compensation_min) >= $${values.length}`); }
   if (query.locationFit && ['excellent', 'good', 'possible', 'poor', 'unknown'].includes(query.locationFit)) { values.push(query.locationFit); conditions.push(`l.location_fit = $${values.length}`); }
   if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`l.remote_mode = $${values.length}`); }
-  if (query.minScore && Number.isFinite(Number(query.minScore)) && Number(query.minScore) > 0) { values.push(Number(query.minScore)); conditions.push(`l.personal_relevance >= $${values.length}`); }
   if (query.minLocationFit && Number.isFinite(Number(query.minLocationFit)) && Number(query.minLocationFit) > 0) { values.push(Number(query.minLocationFit)); conditions.push(`l.location_fit_score >= $${values.length}`); }
   if (query.active !== 'false') conditions.push('l.is_active = true');
-  const sort = query.sort === 'location' ? 'l.location_fit_score DESC, l.personal_relevance DESC, l.source_updated_at DESC NULLS LAST' : query.sort === 'relevance' ? 'l.personal_relevance DESC, l.location_fit_score DESC, l.source_updated_at DESC NULLS LAST' : query.sort === 'updated' ? 'l.source_updated_at DESC NULLS LAST' : 'l.first_observed_at DESC';
+  const sort = query.sort === 'location' ? 'l.location_fit_score DESC, l.source_updated_at DESC NULLS LAST' : query.sort === 'updated' ? 'l.source_updated_at DESC NULLS LAST' : 'l.first_observed_at DESC';
   const limit = Math.min(200, Math.max(1, Number(query.limit) || 100)); const offset = Math.max(0, Number(query.offset) || 0);
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   values.push(limit, offset);
@@ -128,6 +127,26 @@ app.get('/api/job-boards', async (request) => {
   const boards = await pool.query(`SELECT b.*, e.name AS employer_name, e.website AS company_website, (SELECT count(*)::int FROM job_listings l WHERE l.board_id=b.id AND l.is_active) AS active_listing_count FROM job_boards b JOIN employers e ON e.id=b.employer_id ${where} ORDER BY b.status, e.name, b.provider LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]);
   const total = await pool.query(`SELECT count(*)::int AS count FROM job_boards b JOIN employers e ON e.id=b.employer_id ${where}`, values);
   return { boards: boards.rows, total: total.rows[0].count, limit, offset };
+});
+
+app.get('/api/listing-poll-tasks', async (request) => {
+  const query = request.query as { status?: string; limit?: string };
+  const values: unknown[] = [];
+  const conditions: string[] = [];
+  if (query.status && ['queued', 'running', 'completed', 'failed'].includes(query.status)) { values.push(query.status); conditions.push(`t.status=$${values.length}`); }
+  const limit = Math.min(200, Math.max(1, Number(query.limit) || 100));
+  values.push(limit);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const result = await pool.query(`SELECT t.*, b.provider, b.board_identifier, b.board_url, e.name AS employer_name,
+      ROUND(EXTRACT(EPOCH FROM (COALESCE(t.completed_at, now()) - t.started_at)) * 1000)::int AS duration_ms
+    FROM listing_poll_tasks t
+    JOIN job_boards b ON b.id=t.board_id
+    JOIN employers e ON e.id=b.employer_id
+    ${where}
+    ORDER BY CASE t.status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+      COALESCE(t.started_at, t.queued_at) DESC
+    LIMIT $${values.length}`, values);
+  return { tasks: result.rows };
 });
 
 app.post('/api/job-boards', async (request, reply) => {
@@ -310,9 +329,10 @@ app.get('/api/events', async (request, reply) => {
   const health = (data: unknown) => send('health', data);
   const listings = (data: unknown) => send('listings', data);
   const discovery = (data: unknown) => send('listing-discovery', data);
-  events.on('opportunity', opportunity); events.on('health', health); events.on('listings', listings); events.on('listing-health', health); events.on('listing-discovery', discovery);
+  const listingTask = (data: unknown) => send('listing-task', data);
+  events.on('opportunity', opportunity); events.on('health', health); events.on('listings', listings); events.on('listing-health', health); events.on('listing-discovery', discovery); events.on('listing-task', listingTask);
   const heartbeat = setInterval(() => response.write(': heartbeat\n\n'), 15_000);
-  request.raw.on('close', () => { clearInterval(heartbeat); events.off('opportunity', opportunity); events.off('health', health); events.off('listings', listings); events.off('listing-health', health); events.off('listing-discovery', discovery); });
+  request.raw.on('close', () => { clearInterval(heartbeat); events.off('opportunity', opportunity); events.off('health', health); events.off('listings', listings); events.off('listing-health', health); events.off('listing-discovery', discovery); events.off('listing-task', listingTask); });
 });
 
 app.post('/api/dev/sample', async (_request, reply) => {

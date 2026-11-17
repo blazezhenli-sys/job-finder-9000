@@ -8,12 +8,12 @@ const listing = {
 };
 
 describe('listing scoring', () => {
-  it('scores role, technology, remote, and worldwide evidence independently', () => {
+  it('does not calculate personal relevance for ATS listings', () => {
     const result = analyzeListing(listing, defaultPreferences);
-    expect(result.personalRelevance).toBeGreaterThanOrEqual(45);
+    expect(result.personalRelevance).toBe(0);
+    expect(result.relevanceBreakdown).toEqual([]);
     expect(result.locationFit).toBe('excellent');
     expect(result.locationFitScore).toBeGreaterThanOrEqual(80);
-    expect(result.relevanceBreakdown.map((item) => item.label)).toEqual(expect.arrayContaining(['Relevant role', 'Technology match', 'Remote preference', 'International signal']));
   });
 
   it('marks an explicitly restricted location as poor fit', () => {
