@@ -4,7 +4,7 @@ import { getPreferences, pool } from './db.js';
 
 const backoff = (attempts: number) => Math.min(6 * 60 * 60 * 1000, 30_000 * (2 ** Math.min(attempts, 8)));
 
-export async function deliverNotifications() {
+async function deliverPostNotifications() {
   if (!config.smtp.host || !config.smtp.recipient || !config.smtp.from) return;
   const preferences = await getPreferences();
   if (!preferences.notificationsEnabled) return;
@@ -34,6 +34,42 @@ export async function deliverNotifications() {
       await pool.query(`UPDATE notifications SET status = 'failed', attempts = $2, next_attempt_at = now() + ($3::text || ' milliseconds')::interval, last_error = $4 WHERE id = $1`, [notification.id, attempts, backoff(attempts), error instanceof Error ? error.message : String(error)]);
     }
   }
+}
+
+async function deliverListingNotifications() {
+  if (!config.smtp.host || !config.smtp.recipient || !config.smtp.from) return;
+  const preferences = await getPreferences();
+  if (!preferences.listingsNotificationsEnabled) return;
+  const pending = await pool.query(`SELECT n.*, l.title, l.description, l.personal_relevance, l.relevance_breakdown, l.location, l.remote_mode,
+    l.location_fit, l.location_fit_score, l.location_fit_reasons, l.application_url, l.original_url, l.source_updated_at,
+    b.provider, b.board_identifier, e.name AS employer_name FROM listing_notifications n
+    JOIN job_listings l ON l.id=n.listing_id JOIN job_boards b ON b.id=l.board_id JOIN employers e ON e.id=b.employer_id
+    WHERE n.status IN ('pending','failed') AND n.next_attempt_at <= now() AND l.is_active=true
+    ORDER BY n.created_at LIMIT 10`);
+  if (!pending.rows.length) return;
+  const transport = nodemailer.createTransport({ host: config.smtp.host, port: config.smtp.port, secure: config.smtp.secure, auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.password } : undefined });
+  for (const notification of pending.rows) {
+    try {
+      const breakdown = (notification.relevance_breakdown as { label: string; points: number; evidence: string[] }[] || []).map((item) => `${item.label} +${item.points} (${item.evidence.join(', ')})`).join('\n');
+      const reasons = (notification.location_fit_reasons as string[] || []).join('; ');
+      const link = notification.application_url || notification.original_url;
+      await transport.sendMail({
+        from: config.smtp.from,
+        to: config.smtp.recipient,
+        subject: `[Listing R${notification.personal_relevance}/L${notification.location_fit_score}] ${notification.title} · ${notification.employer_name}`,
+        text: `Job listing detected\n\n${notification.title}\nEmployer: ${notification.employer_name}\nProvider: ${notification.provider}\nLocation: ${notification.location || 'Not specified'}\nWork mode: ${notification.remote_mode}\nLocation fit: ${notification.location_fit} (${notification.location_fit_score}/100)\nLocation explanation: ${reasons || 'No explicit location-fit evidence'}\nPersonal relevance: ${notification.personal_relevance}/100\nSource: ${link}\nUpdated: ${notification.source_updated_at || 'unknown'}\n\nRelevance breakdown:\n${breakdown || 'No additional scoring details'}\n\n${notification.description}`
+      });
+      await pool.query(`UPDATE listing_notifications SET status='sent', sent_at=now(), attempts=attempts+1, last_error=NULL WHERE id=$1`, [notification.id]);
+    } catch (error) {
+      const attempts = Number(notification.attempts) + 1;
+      await pool.query(`UPDATE listing_notifications SET status='failed', attempts=$2, next_attempt_at=now() + ($3::text || ' milliseconds')::interval, last_error=$4 WHERE id=$1`, [notification.id, attempts, backoff(attempts), error instanceof Error ? error.message : String(error)]);
+    }
+  }
+}
+
+export async function deliverNotifications() {
+  await deliverPostNotifications();
+  await deliverListingNotifications();
 }
 
 export async function sendTestEmail() {

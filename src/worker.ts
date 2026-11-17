@@ -7,9 +7,11 @@ import { HackerNewsSource } from './sources/hacker-news.js';
 import { MastodonSource } from './sources/mastodon.js';
 import { RedditSource } from './sources/reddit.js';
 import type { SourceAdapter } from './sources/types.js';
+import { startListingPolling } from './listings/service.js';
 
 let started = false;
 const sources: SourceAdapter[] = [];
+let listingTimer: NodeJS.Timeout | undefined;
 
 export async function startWorkers() {
   if (started) return;
@@ -26,7 +28,8 @@ export async function startWorkers() {
   }
   setInterval(() => void deliverNotifications(), 15_000);
   setInterval(() => void removeExpired(), 60 * 60 * 1000);
+  if (config.enableListings) listingTimer = startListingPolling(config.listingsPollIntervalMs);
   void deliverNotifications();
 }
 
-export function stopWorkers() { for (const source of sources) source.stop(); }
+export function stopWorkers() { for (const source of sources) source.stop(); if (listingTimer) clearInterval(listingTimer); }

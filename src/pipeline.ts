@@ -28,7 +28,7 @@ const locationCatalog: Array<[string, string[]]> = [
   ['New York', ['new york']], ['San Francisco', ['san francisco']], ['Seattle', ['seattle']], ['Los Angeles', ['los angeles']], ['Boston', ['boston']], ['Toronto', ['toronto']], ['Vancouver', ['vancouver']], ['London', ['london']], ['Berlin', ['berlin']], ['Munich', ['munich']], ['Paris', ['paris']], ['Amsterdam', ['amsterdam']], ['Dublin', ['dublin']], ['Singapore', ['singapore']], ['Taipei', ['taipei']]
 ];
 
-function locationSignals(text: string): LocationSignals {
+export function extractLocationSignals(text: string): LocationSignals {
   const locations = new Set<string>();
   const evidence: string[] = [];
   const addEvidence = (pattern: RegExp) => { for (const match of text.matchAll(pattern)) { const value = match[0].replace(/\s+/g, ' ').trim(); if (value && !evidence.includes(value)) evidence.push(value); } };
@@ -70,7 +70,7 @@ function locationSignals(text: string): LocationSignals {
   return { workMode, locations: [...locations], employerLocations, regions, workEligibility, constraint, timezoneRequirements, evidence: evidence.slice(0, 12) };
 }
 
-function evaluateLocationFit(signals: LocationSignals, preferences: Preferences): { fit: LocationFit; score: number; reasons: string[] } {
+export function evaluateLocationFit(signals: LocationSignals, preferences: Preferences): { fit: LocationFit; score: number; reasons: string[] } {
   const profile = preferences.locationProfile;
   const base = profile.baseLocation.toLowerCase();
   const preferredRegions = profile.preferredRegions.map((region) => region.toLowerCase());
@@ -164,7 +164,7 @@ export function analyzePost(post: NormalizedPost, rules: DetectionRule[], prefer
   const contractTerms = matchingTerms(text, preferences.contractTerms);
   const contactTerms = matchingTerms(text, preferences.contactTerms);
   const methods = contactMethods(text);
-  const extractedLocations = locationSignals(text);
+  const extractedLocations = extractLocationSignals(text);
   const locationFit = evaluateLocationFit(extractedLocations, preferences);
   const employmentTypes = [contractTerms.some((term) => /contract|freelance|consult|part-time/i.test(term)) ? 'contract/freelance' : '', /\bfull[- ]?time\b/i.test(text) ? 'full-time' : '', /\bpart[- ]?time\b/i.test(text) ? 'part-time' : ''].filter(Boolean);
   const quality = classifySignal(text, post, author, registry, methods);

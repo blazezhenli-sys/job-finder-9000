@@ -5,6 +5,9 @@ export type AuthorClassification = 'unknown' | 'aggregator' | 'employer' | 'legi
 export type WorkMode = 'remote' | 'hybrid' | 'onsite' | 'unknown';
 export type LocationConstraint = 'allowed' | 'restricted' | 'unknown';
 export type LocationFit = 'excellent' | 'good' | 'possible' | 'poor' | 'unknown';
+export type AtsProvider = 'greenhouse' | 'ashby' | 'lever';
+export type BoardStatus = 'active' | 'disabled';
+export type JobListingStatus = 'new' | 'saved' | 'dismissed' | 'applied';
 
 export interface DetectionRule {
   id: string;
@@ -108,4 +111,59 @@ export interface Preferences {
   contactTerms: string[];
   weights: Record<string, number>;
   locationProfile: LocationProfile;
+  listingsNotificationsEnabled: boolean;
+  minimumListingRelevance: number;
+  minimumListingLocationFitScore: number;
+}
+
+export interface JobBoard {
+  id: string;
+  employerId: string;
+  employerName: string;
+  companyWebsite: string;
+  provider: AtsProvider;
+  boardIdentifier: string;
+  boardUrl: string;
+  status: BoardStatus;
+  discoverySource: string;
+  firstDiscoveredAt: string;
+  initializedAt?: string | null;
+  lastSuccessfulPoll?: string | null;
+  lastAttemptedPoll?: string | null;
+  lastNewListingDiscovered?: string | null;
+  pollingIntervalSeconds: number;
+  consecutiveFailureCount: number;
+  lastError?: string | null;
+}
+
+export interface NormalizedJobListing {
+  providerJobId: string;
+  title: string;
+  descriptionHtml?: string;
+  description: string;
+  department?: string;
+  team?: string;
+  location?: string;
+  secondaryLocations?: string[];
+  remoteMode?: WorkMode;
+  geographicRestrictions?: string[];
+  employmentType?: string;
+  seniority?: string;
+  compensation?: unknown;
+  applicationUrl: string;
+  originalUrl: string;
+  publishedAt?: Date | null;
+  updatedAt?: Date | null;
+  raw: unknown;
+}
+
+export interface ListingAnalysis {
+  technologies: string[];
+  employmentType: string;
+  personalRelevance: number;
+  relevanceBreakdown: ScoreContribution[];
+  locationSignals: LocationSignals;
+  locationFit: LocationFit;
+  locationFitScore: number;
+  locationFitReasons: string[];
 }

@@ -2,10 +2,10 @@ import path from 'node:path';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { config } from './config.js';
-import { getPreferences, getRules, migrate, pool, setPreferences } from './db.js';
+import { getPreferences, getRules, migrate, pool, setPreferences, withTransaction } from './db.js';
 import { sendTestEmail } from './notifications.js';
 import { events, processPost } from './pipeline-service.js';
-import type { AuthorClassification, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
+import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 
 const app = Fastify({ logger: true });
 const publicDir = path.join(process.cwd(), 'public');
@@ -59,6 +59,86 @@ app.get('/api/opportunities/:id', async (request, reply) => {
   if (!result.rows[0]) return reply.code(404).send({ error: 'Opportunity not found' });
   return result.rows[0];
 });
+
+const atsProviders: AtsProvider[] = ['greenhouse', 'ashby', 'lever'];
+const listingStatuses: JobListingStatus[] = ['new', 'saved', 'dismissed', 'applied'];
+function provider(value: unknown): value is AtsProvider { return typeof value === 'string' && atsProviders.includes(value as AtsProvider); }
+function boardIdentifier(value: unknown, providerName: AtsProvider): string {
+  const raw = String(value ?? '').trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
+  if (!raw) return '';
+  const parts = raw.split('/').filter(Boolean);
+  if (parts.length === 1) return raw;
+  if (providerName === 'greenhouse' && parts[0] === 'boards.greenhouse.io') return parts[1] ?? '';
+  if (providerName === 'ashby' && parts[0] === 'jobs.ashbyhq.com') return parts[1] ?? '';
+  if (providerName === 'greenhouse' && parts.includes('job_board')) return parts[parts.indexOf('job_board') + 1] ?? '';
+  if (providerName === 'ashby' && parts.includes('job-board')) return parts[parts.indexOf('job-board') + 1] ?? '';
+  if (providerName === 'lever' && parts[0] === 'jobs.lever.co') return parts[1] ?? '';
+  return parts.at(-1) ?? '';
+}
+
+app.get('/api/listings', async (request) => {
+  const query = request.query as { provider?: string; status?: string; employer?: string; locationFit?: string; workMode?: string; minScore?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
+  const values: unknown[] = []; const conditions: string[] = [];
+  if (provider(query.provider)) { values.push(query.provider); conditions.push(`l.provider = $${values.length}`); }
+  if (query.status && listingStatuses.includes(query.status as JobListingStatus)) { values.push(query.status); conditions.push(`l.status = $${values.length}`); }
+  if (query.employer) { values.push(`%${query.employer}%`); conditions.push(`e.name ILIKE $${values.length}`); }
+  if (query.locationFit && ['excellent', 'good', 'possible', 'poor', 'unknown'].includes(query.locationFit)) { values.push(query.locationFit); conditions.push(`l.location_fit = $${values.length}`); }
+  if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`l.remote_mode = $${values.length}`); }
+  if (query.minScore && Number.isFinite(Number(query.minScore))) { values.push(Number(query.minScore)); conditions.push(`l.personal_relevance >= $${values.length}`); }
+  if (query.minLocationFit && Number.isFinite(Number(query.minLocationFit))) { values.push(Number(query.minLocationFit)); conditions.push(`l.location_fit_score >= $${values.length}`); }
+  if (query.active !== 'false') conditions.push('l.is_active = true');
+  const sort = query.sort === 'location' ? 'l.location_fit_score DESC, l.personal_relevance DESC, l.source_updated_at DESC NULLS LAST' : query.sort === 'relevance' ? 'l.personal_relevance DESC, l.location_fit_score DESC, l.source_updated_at DESC NULLS LAST' : query.sort === 'updated' ? 'l.source_updated_at DESC NULLS LAST' : 'l.first_observed_at DESC';
+  const limit = Math.min(200, Math.max(1, Number(query.limit) || 100)); const offset = Math.max(0, Number(query.offset) || 0);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  values.push(limit, offset);
+  const result = await pool.query(`SELECT l.*, b.board_identifier, b.board_url, b.status AS board_status, e.id AS employer_id, e.name AS employer_name, e.website AS employer_website FROM job_listings l JOIN job_boards b ON b.id = l.board_id JOIN employers e ON e.id = b.employer_id ${where} ORDER BY ${sort} LIMIT $${values.length - 1} OFFSET $${values.length}`, values);
+  const total = await pool.query(`SELECT count(*)::int AS count FROM job_listings l JOIN job_boards b ON b.id = l.board_id JOIN employers e ON e.id = b.employer_id ${where}`, values.slice(0, -2));
+  return { listings: result.rows, total: total.rows[0].count };
+});
+
+app.get('/api/listings/:id', async (request, reply) => {
+  const result = await pool.query(`SELECT l.*, b.board_identifier, b.board_url, e.id AS employer_id, e.name AS employer_name, e.website AS employer_website FROM job_listings l JOIN job_boards b ON b.id = l.board_id JOIN employers e ON e.id = b.employer_id WHERE l.id = $1`, [(request.params as { id: string }).id]);
+  if (!result.rows[0]) return reply.code(404).send({ error: 'Listing not found' });
+  return result.rows[0];
+});
+
+app.patch('/api/listings/:id', async (request, reply) => {
+  const body = request.body as { status?: string };
+  if (!body.status || !listingStatuses.includes(body.status as JobListingStatus)) return reply.code(400).send({ error: 'status must be new, saved, dismissed, or applied' });
+  const result = await pool.query('UPDATE job_listings SET status=$1, updated_at=now() WHERE id=$2 RETURNING *', [body.status, (request.params as { id: string }).id]);
+  if (!result.rows[0]) return reply.code(404).send({ error: 'Listing not found' });
+  return result.rows[0];
+});
+
+app.get('/api/job-boards', async () => ({ boards: (await pool.query(`SELECT b.*, e.name AS employer_name, e.website AS company_website, (SELECT count(*)::int FROM job_listings l WHERE l.board_id=b.id AND l.is_active) AS active_listing_count FROM job_boards b JOIN employers e ON e.id=b.employer_id ORDER BY b.status, e.name, b.provider`)).rows }));
+
+app.post('/api/job-boards', async (request, reply) => {
+  const body = request.body as { employerName?: string; companyWebsite?: string; provider?: string; boardIdentifier?: string; boardUrl?: string; discoverySource?: string; pollingIntervalSeconds?: number };
+  if (!provider(body.provider) || !body.employerName?.trim()) return reply.code(400).send({ error: 'provider and employerName are required' });
+  const identifier = boardIdentifier(body.boardIdentifier || body.boardUrl, body.provider);
+  if (!identifier) return reply.code(400).send({ error: 'boardIdentifier or boardUrl is required' });
+  const employerName = body.employerName.trim();
+  const board = await withTransaction(async (client) => {
+    const employer = await client.query(`INSERT INTO employers (name, website) VALUES ($1,$2) ON CONFLICT (name, website) DO UPDATE SET updated_at=now() RETURNING id`, [employerName, body.companyWebsite?.trim() ?? '']);
+    const result = await client.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source, polling_interval_seconds) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (provider, board_identifier) DO UPDATE SET employer_id=EXCLUDED.employer_id, board_url=EXCLUDED.board_url, discovery_source=EXCLUDED.discovery_source, polling_interval_seconds=EXCLUDED.polling_interval_seconds, status='active', updated_at=now() RETURNING *`, [employer.rows[0].id, body.provider, identifier, body.boardUrl?.trim() || `https://${body.provider === 'greenhouse' ? 'boards.greenhouse.io' : body.provider === 'ashby' ? 'jobs.ashbyhq.com' : 'jobs.lever.co'}/${identifier}`, body.discoverySource?.trim() || 'manual', Math.max(60, Number(body.pollingIntervalSeconds) || 900)]);
+    return result.rows[0];
+  });
+  return reply.code(201).send(board);
+});
+
+app.patch('/api/job-boards/:id', async (request, reply) => {
+  const body = request.body as { status?: string; pollingIntervalSeconds?: number };
+  const assignments: string[] = []; const values: unknown[] = [];
+  if (body.status !== undefined) { if (!['active', 'disabled'].includes(body.status)) return reply.code(400).send({ error: 'status must be active or disabled' }); values.push(body.status); assignments.push(`status=$${values.length}`); }
+  if (body.pollingIntervalSeconds !== undefined) { values.push(Math.max(60, Number(body.pollingIntervalSeconds) || 900)); assignments.push(`polling_interval_seconds=$${values.length}`); }
+  if (!assignments.length) return reply.code(400).send({ error: 'No changes supplied' });
+  values.push((request.params as { id: string }).id);
+  const result = await pool.query(`UPDATE job_boards SET ${assignments.join(',')}, updated_at=now() WHERE id=$${values.length} RETURNING *`, values);
+  if (!result.rows[0]) return reply.code(404).send({ error: 'Board not found' });
+  return result.rows[0];
+});
+
+app.delete('/api/job-boards/:id', async (request) => { await pool.query(`UPDATE job_boards SET status='disabled', updated_at=now() WHERE id=$1`, [(request.params as { id: string }).id]); return { ok: true }; });
 
 app.patch('/api/opportunities/:id', async (request, reply) => {
   const body = request.body as { status?: OpportunityStatus; signal_category?: SignalCategory; suppressed?: boolean };
@@ -161,10 +241,11 @@ app.get('/api/settings', async () => {
 app.put('/api/settings', async (request, reply) => {
   const body = request.body as Record<string, unknown>;
   const current = await getPreferences();
-  const allowed = ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumNotificationLocationFitScore', 'notificationsEnabled', 'notifyRecovered', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'locationProfile'];
+  const allowed = ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumNotificationLocationFitScore', 'notificationsEnabled', 'notifyRecovered', 'listingsNotificationsEnabled', 'minimumListingRelevance', 'minimumListingLocationFitScore', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'locationProfile'];
   const changes: Record<string, unknown> = {};
   for (const key of allowed) if (body[key] !== undefined) changes[key] = body[key];
   for (const key of ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumNotificationLocationFitScore']) if (changes[key] !== undefined && (!Number.isFinite(Number(changes[key])) || Number(changes[key]) < 0 || Number(changes[key]) > 100)) return reply.code(400).send({ error: `${key} must be 0-100` });
+  for (const key of ['minimumListingRelevance', 'minimumListingLocationFitScore']) if (changes[key] !== undefined && (!Number.isFinite(Number(changes[key])) || Number(changes[key]) < 0 || Number(changes[key]) > 100)) return reply.code(400).send({ error: `${key} must be 0-100` });
   return { preferences: await setPreferences({ ...current, ...changes }) };
 });
 
@@ -176,7 +257,10 @@ app.post('/api/notifications/test', async (_request, reply) => {
 app.get('/api/monitoring', async () => {
   const states = await pool.query('SELECT * FROM ingestion_states ORDER BY source');
   const notification = await pool.query(`SELECT count(*) FILTER (WHERE status = 'sent')::int AS sent, count(*) FILTER (WHERE status IN ('pending','failed'))::int AS pending, count(*) FILTER (WHERE status = 'failed')::int AS failed FROM notifications`);
-  return { sources: states.rows, notifications: notification.rows[0], smtpConfigured: Boolean(config.smtp.host && config.smtp.from && config.smtp.recipient) };
+  const listingBoards = await pool.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE status='active')::int AS active, count(*) FILTER (WHERE last_successful_poll IS NOT NULL)::int AS polled, count(*) FILTER (WHERE consecutive_failure_count > 0)::int AS failing FROM job_boards`);
+  const listingCounts = await pool.query(`SELECT count(*) FILTER (WHERE is_active)::int AS active, count(*) FILTER (WHERE status='saved')::int AS saved, count(*) FILTER (WHERE status='applied')::int AS applied, count(*) FILTER (WHERE status='dismissed')::int AS dismissed, count(*) FILTER (WHERE location_fit IN ('excellent','good'))::int AS good_location FROM job_listings`);
+  const listingNotifications = await pool.query(`SELECT count(*) FILTER (WHERE status='sent')::int AS sent, count(*) FILTER (WHERE status IN ('pending','failed'))::int AS pending, count(*) FILTER (WHERE status='failed')::int AS failed FROM listing_notifications`);
+  return { sources: states.rows, notifications: notification.rows[0], listingBoards: listingBoards.rows[0], listingCounts: listingCounts.rows[0], listingNotifications: listingNotifications.rows[0], smtpConfigured: Boolean(config.smtp.host && config.smtp.from && config.smtp.recipient) };
 });
 
 app.get('/api/events', async (request, reply) => {
@@ -186,9 +270,10 @@ app.get('/api/events', async (request, reply) => {
   const send = (event: string, data: unknown) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   const opportunity = (data: unknown) => send('opportunity', data);
   const health = (data: unknown) => send('health', data);
-  events.on('opportunity', opportunity); events.on('health', health);
+  const listings = (data: unknown) => send('listings', data);
+  events.on('opportunity', opportunity); events.on('health', health); events.on('listings', listings); events.on('listing-health', health);
   const heartbeat = setInterval(() => response.write(': heartbeat\n\n'), 15_000);
-  request.raw.on('close', () => { clearInterval(heartbeat); events.off('opportunity', opportunity); events.off('health', health); });
+  request.raw.on('close', () => { clearInterval(heartbeat); events.off('opportunity', opportunity); events.off('health', health); events.off('listings', listings); events.off('listing-health', health); });
 });
 
 app.post('/api/dev/sample', async (_request, reply) => {

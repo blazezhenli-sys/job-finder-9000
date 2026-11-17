@@ -43,6 +43,8 @@ export const config = {
   redditUserAgent: process.env.REDDIT_USER_AGENT ?? 'hiring-signal-discovery/0.1 by personal-use',
   redditSubreddits: (process.env.REDDIT_SUBREDDITS ?? 'forhire,startups,Entrepreneur,remotejs').split(',').map((value) => value.trim().replace(/^r\//, '')).filter(Boolean),
   redditPollIntervalMs: num(process.env.REDDIT_POLL_INTERVAL_MS, 60_000),
+  enableListings: bool(process.env.ENABLE_LISTINGS, true),
+  listingsPollIntervalMs: num(process.env.LISTINGS_POLL_INTERVAL_MS, 900_000),
   devMode: bool(process.env.DEV_MODE, false),
   notifyRecovered: bool(process.env.NOTIFY_RECOVERED, false),
   retentionDays: num(process.env.RETENTION_DAYS, 30),
