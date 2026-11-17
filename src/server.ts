@@ -160,7 +160,7 @@ app.post('/api/job-boards', async (request, reply) => {
   const board = await withTransaction(async (client) => {
     const employer = await client.query(`INSERT INTO employers (name, website) VALUES ($1,$2) ON CONFLICT (name, website) DO UPDATE SET updated_at=now() RETURNING id`, [employerName, body.companyWebsite?.trim() ?? '']);
     const host = body.provider === 'greenhouse' ? 'boards.greenhouse.io' : body.provider === 'ashby' ? 'jobs.ashbyhq.com' : body.provider === 'lever' ? 'jobs.lever.co' : body.provider === 'remotive' ? 'remotive.com/remote-jobs' : 'adzuna.com';
-    const result = await client.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source, polling_interval_seconds) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (provider, board_identifier) DO UPDATE SET employer_id=EXCLUDED.employer_id, board_url=EXCLUDED.board_url, discovery_source=EXCLUDED.discovery_source, polling_interval_seconds=EXCLUDED.polling_interval_seconds, status='active', updated_at=now() RETURNING *`, [employer.rows[0].id, body.provider, identifier, body.boardUrl?.trim() || `https://${host}/${identifier}`, body.discoverySource?.trim() || 'manual', Math.max(60, Number(body.pollingIntervalSeconds) || 900)]);
+    const result = await client.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source, polling_interval_seconds) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (provider, board_identifier) DO UPDATE SET employer_id=EXCLUDED.employer_id, board_url=EXCLUDED.board_url, discovery_source=EXCLUDED.discovery_source, polling_interval_seconds=EXCLUDED.polling_interval_seconds, status='active', updated_at=now() RETURNING *`, [employer.rows[0].id, body.provider, identifier, body.boardUrl?.trim() || `https://${host}/${identifier}`, body.discoverySource?.trim() || 'manual', Math.max(60, Number(body.pollingIntervalSeconds) || 3_600)]);
     return result.rows[0];
   });
   return reply.code(201).send(board);
@@ -170,7 +170,7 @@ app.patch('/api/job-boards/:id', async (request, reply) => {
   const body = request.body as { status?: string; pollingIntervalSeconds?: number };
   const assignments: string[] = []; const values: unknown[] = [];
   if (body.status !== undefined) { if (!['active', 'disabled'].includes(body.status)) return reply.code(400).send({ error: 'status must be active or disabled' }); values.push(body.status); assignments.push(`status=$${values.length}`); }
-  if (body.pollingIntervalSeconds !== undefined) { values.push(Math.max(60, Number(body.pollingIntervalSeconds) || 900)); assignments.push(`polling_interval_seconds=$${values.length}`); }
+  if (body.pollingIntervalSeconds !== undefined) { values.push(Math.max(60, Number(body.pollingIntervalSeconds) || 3_600)); assignments.push(`polling_interval_seconds=$${values.length}`); }
   if (!assignments.length) return reply.code(400).send({ error: 'No changes supplied' });
   values.push((request.params as { id: string }).id);
   const result = await pool.query(`UPDATE job_boards SET ${assignments.join(',')}, updated_at=now() WHERE id=$${values.length} RETURNING *`, values);

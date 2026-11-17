@@ -44,7 +44,7 @@ export const config = {
   redditSubreddits: (process.env.REDDIT_SUBREDDITS ?? 'forhire,startups,Entrepreneur,remotejs').split(',').map((value) => value.trim().replace(/^r\//, '')).filter(Boolean),
   redditPollIntervalMs: num(process.env.REDDIT_POLL_INTERVAL_MS, 60_000),
   enableListings: bool(process.env.ENABLE_LISTINGS, true),
-  listingsPollIntervalMs: num(process.env.LISTINGS_POLL_INTERVAL_MS, 900_000),
+  listingsPollIntervalMs: num(process.env.LISTINGS_POLL_INTERVAL_MS, 3_600_000),
   enableListingDiscovery: bool(process.env.ENABLE_LISTING_DISCOVERY, true),
   listingDiscoveryIntervalMs: num(process.env.LISTING_DISCOVERY_INTERVAL_MS, 86_400_000),
   remotiveBoardPollIntervalSeconds: num(process.env.REMOTIVE_POLL_INTERVAL_SECONDS, 21_600),
