@@ -104,6 +104,15 @@ app.get('/api/listings', async (request) => {
   return { listings: result.rows, total: total.rows[0].count };
 });
 
+app.get('/api/listing-departments', async () => {
+  const result = await pool.query(`SELECT department, count(*)::int AS listing_count
+    FROM job_listings
+    WHERE is_active=true AND department <> ''
+    GROUP BY department
+    ORDER BY lower(department), department`);
+  return { departments: result.rows };
+});
+
 app.get('/api/listings/:id', async (request, reply) => {
   const result = await pool.query(`SELECT l.*, b.board_identifier, b.board_url, e.id AS employer_id, e.name AS employer_name, e.website AS employer_website FROM job_listings l JOIN job_boards b ON b.id = l.board_id JOIN employers e ON e.id = b.employer_id WHERE l.id = $1`, [(request.params as { id: string }).id]);
   if (!result.rows[0]) return reply.code(404).send({ error: 'Listing not found' });
