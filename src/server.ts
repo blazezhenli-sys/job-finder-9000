@@ -6,6 +6,7 @@ import { getPreferences, getRules, migrate, pool, setPreferences, withTransactio
 import { sendTestEmail } from './notifications.js';
 import { events, processPost } from './pipeline-service.js';
 import { createDiscoveryJob, getDiscoveryJobs } from './listings/discovery.js';
+import { calculateProspectScore, engineeringSpecialtyLabels } from './listings/company.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 
 const app = Fastify({ logger: true });
@@ -80,11 +81,12 @@ function boardIdentifier(value: unknown, providerName: AtsProvider): string {
 }
 
 app.get('/api/listings', async (request) => {
-  const query = request.query as { provider?: string; status?: string; employer?: string; department?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; maxAgeDays?: string; locationFit?: string; workMode?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
+  const query = request.query as { provider?: string; status?: string; employer?: string; employerId?: string; department?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; maxAgeDays?: string; locationFit?: string; workMode?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
   const values: unknown[] = []; const conditions: string[] = [];
   if (provider(query.provider)) { values.push(query.provider); conditions.push(`l.provider = $${values.length}`); }
   if (query.status && listingStatuses.includes(query.status as JobListingStatus)) { values.push(query.status); conditions.push(`l.status = $${values.length}`); }
   if (query.employer) { values.push(`%${query.employer}%`); conditions.push(`e.name ILIKE $${values.length}`); }
+  if (query.employerId) { values.push(query.employerId); conditions.push(`e.id = $${values.length}`); }
   if (query.department) { values.push(`%${query.department}%`); conditions.push(`l.department ILIKE $${values.length}`); }
   if (query.employmentType) { values.push(`%${query.employmentType}%`); conditions.push(`l.employment_type ILIKE $${values.length}`); }
   if (query.seniority) { values.push(`%${query.seniority}%`); conditions.push(`l.seniority ILIKE $${values.length}`); }
@@ -123,6 +125,98 @@ app.get('/api/listing-departments', async (request) => {
     ${order}
     LIMIT $${values.length}`, values);
   return { departments: result.rows };
+});
+
+const companySorts: Record<string, string> = {
+  name: 'lower(e.name) ASC',
+  engineering: 'active_engineering DESC, lower(e.name) ASC',
+  new: 'new_engineering_7d DESC, lower(e.name) ASC',
+  recent: 'latest_hiring_activity DESC NULLS LAST, lower(e.name) ASC',
+  score: 'prospect_score DESC, lower(e.name) ASC'
+};
+
+app.get('/api/companies', async (request) => {
+  const query = request.query as { q?: string; provider?: string; specialty?: string; remote?: string; contract?: string; prospectStatus?: string; sort?: string; limit?: string; offset?: string };
+  const values: unknown[] = [];
+  const conditions: string[] = [];
+  if (query.q?.trim()) { values.push(`%${query.q.trim()}%`); conditions.push(`e.name ILIKE $${values.length}`); }
+  if (provider(query.provider)) { values.push(query.provider); conditions.push(`EXISTS (SELECT 1 FROM job_boards filter_b WHERE filter_b.employer_id=e.id AND filter_b.provider=$${values.length})`); }
+  if (query.specialty && Object.keys(requirementSpecialties).includes(query.specialty)) { values.push(query.specialty); conditions.push(`EXISTS (SELECT 1 FROM job_listings filter_l JOIN job_boards filter_b ON filter_b.id=filter_l.board_id WHERE filter_b.employer_id=e.id AND filter_l.is_active AND filter_l.engineering_specialties ? $${values.length})`); }
+  if (query.remote === 'true') conditions.push(`EXISTS (SELECT 1 FROM job_listings filter_l JOIN job_boards filter_b ON filter_b.id=filter_l.board_id WHERE filter_b.employer_id=e.id AND filter_l.is_active AND filter_l.remote_mode='remote')`);
+  if (query.contract === 'true') conditions.push(`EXISTS (SELECT 1 FROM job_listings filter_l JOIN job_boards filter_b ON filter_b.id=filter_l.board_id WHERE filter_b.employer_id=e.id AND filter_l.is_active AND lower(filter_l.employment_type) LIKE '%contract%'` + `)`);
+  if (query.prospectStatus && ['unreviewed', 'interesting', 'contacted', 'follow_up', 'not_interested'].includes(query.prospectStatus)) { values.push(query.prospectStatus); conditions.push(`e.prospect_status=$${values.length}`); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
+  const offset = Math.max(0, Number(query.offset) || 0);
+  const select = `SELECT e.id, e.name, e.website, e.verified_domain, e.description, e.industry, e.headquarters, e.company_size, e.prospect_status, e.first_discovered_at, e.updated_at,
+    count(DISTINCT b.id)::int AS board_count,
+    count(DISTINCT b.id) FILTER (WHERE b.status='active')::int AS active_board_count,
+    count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
+    count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering,
+    count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_engineering_7d,
+    count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '30 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_engineering_30d,
+    count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote')::int AS remote_listing_count,
+    count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%')::int AS contract_listing_count,
+    max(l.last_observed_at) AS latest_hiring_activity,
+    (LEAST(30, count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0) * 5)
+      + LEAST(25, count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0) * 8)
+      + LEAST(20, count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%') * 10)
+      + LEAST(10, count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote') * 2)
+      + CASE WHEN max(l.last_observed_at) >= now() - interval '30 days' THEN 5 ELSE 0 END)::int AS prospect_score,
+    COALESCE(array_agg(DISTINCT b.provider) FILTER (WHERE b.id IS NOT NULL), '{}') AS providers
+    FROM employers e LEFT JOIN job_boards b ON b.employer_id=e.id LEFT JOIN job_listings l ON l.board_id=b.id ${where} GROUP BY e.id`;
+  const sort = companySorts[query.sort ?? ''] ?? companySorts.name;
+  const result = await pool.query(`${select} ORDER BY ${sort} LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]);
+  const companies = result.rows.map((row) => ({ ...row, prospect_score: calculateProspectScore({ activeEngineering: Number(row.active_engineering), newEngineering7d: Number(row.new_engineering_7d), contractListings: Number(row.contract_listing_count), remoteListings: Number(row.remote_listing_count), hasRecentActivity: Boolean(row.latest_hiring_activity && new Date(row.latest_hiring_activity).getTime() >= Date.now() - 30 * 86_400_000) }).score }));
+  const total = await pool.query(`SELECT count(*)::int AS count FROM employers e ${where}`, values);
+  return { companies, total: total.rows[0].count, limit, offset };
+});
+
+const requirementSpecialties: Record<string, true> = {
+  backend_api: true, frontend: true, full_stack: true, infrastructure_devops: true, data_engineering: true,
+  machine_learning_ai: true, mobile: true, security: true, other_software: true
+};
+
+app.get('/api/companies/:id', async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  const company = await pool.query(`SELECT id, name, website, verified_domain, description, industry, headquarters, company_size, prospect_status, prospect_notes, follow_up_at, contacted_at, first_discovered_at, updated_at FROM employers WHERE id=$1`, [id]);
+  if (!company.rows[0]) return reply.code(404).send({ error: 'Company not found' });
+  const [boards, summary, specialties, listings, activity] = await Promise.all([
+    pool.query(`SELECT b.*, count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1 GROUP BY b.id ORDER BY b.status, b.provider, b.board_identifier`, [id]),
+    pool.query(`SELECT count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
+      count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering_count,
+      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_listing_count_7d,
+      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '30 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_listing_count_30d,
+      count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote')::int AS remote_listing_count,
+      count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%')::int AS contract_listing_count,
+      max(b.last_successful_poll) AS last_successful_monitoring
+      FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1`, [id]),
+    pool.query(`SELECT specialty, count(*)::int AS listing_count FROM job_listings l JOIN job_boards b ON b.id=l.board_id CROSS JOIN LATERAL jsonb_array_elements_text(l.engineering_specialties) specialty WHERE b.employer_id=$1 AND l.is_active GROUP BY specialty ORDER BY listing_count DESC, specialty`, [id]),
+    pool.query(`SELECT l.id, l.title, l.department, l.location, l.remote_mode, l.employment_type, l.seniority, l.application_url, l.original_url, l.source_updated_at, l.first_observed_at, l.engineering_specialties, l.technologies, l.location_fit, l.location_fit_score, b.provider, b.board_identifier FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=$1 AND l.is_active ORDER BY l.source_updated_at DESC NULLS LAST, l.first_observed_at DESC LIMIT 100`, [id])
+    ,pool.query(`SELECT date_trunc('day', o.observed_at) AS day, sum(o.listings_seen)::int AS listings_seen, sum(o.active_engineering)::int AS active_engineering, sum(o.new_listings)::int AS new_listings, sum(o.new_engineering)::int AS new_engineering, sum(o.missing_listings)::int AS missing_listings FROM listing_board_observations o JOIN job_boards b ON b.id=o.board_id WHERE b.employer_id=$1 GROUP BY date_trunc('day', o.observed_at) ORDER BY day ASC LIMIT 180`, [id])
+  ]);
+  const summaryRow = summary.rows[0] ?? {};
+  const prospect = calculateProspectScore({ activeEngineering: Number(summaryRow.active_engineering_count), newEngineering7d: Number(summaryRow.new_listing_count_7d), contractListings: Number(summaryRow.contract_listing_count), remoteListings: Number(summaryRow.remote_listing_count), hasRecentActivity: Boolean(summaryRow.last_successful_monitoring && new Date(summaryRow.last_successful_monitoring).getTime() >= Date.now() - 30 * 86_400_000) });
+  const signals: Array<{ type: string; label: string; explanation: string }> = [];
+  const recentNewEngineering = activity.rows.filter((row) => new Date(row.day).getTime() >= Date.now() - 30 * 86_400_000).reduce((total, row) => total + Number(row.new_engineering), 0);
+  if (recentNewEngineering >= 3) signals.push({ type: 'engineering_expansion', label: 'Engineering hiring expansion', explanation: `${recentNewEngineering} engineering openings were observed after board baselines in the last 30 days.` });
+  if (Number(summaryRow.contract_listing_count) > 0) signals.push({ type: 'contract_hiring', label: 'Contract-friendly evidence', explanation: `${summaryRow.contract_listing_count} active listing${Number(summaryRow.contract_listing_count) === 1 ? '' : 's'} explicitly mention contract work.` });
+  if ((specialties.rows as Array<{ specialty: string }>).some((row) => row.specialty === 'infrastructure_devops')) signals.push({ type: 'infrastructure_demand', label: 'Infrastructure demand', explanation: 'Active listings include infrastructure, DevOps, platform, or SRE specialties.' });
+  return { company: { ...company.rows[0], prospect_score: prospect.score, prospect_score_factors: prospect.factors }, boards: boards.rows, summary: summaryRow, specialties: specialties.rows.map((row) => ({ ...row, label: engineeringSpecialtyLabels[row.specialty] || row.specialty })), listings: listings.rows, activity: activity.rows, signals };
+});
+
+app.patch('/api/companies/:id', async (request, reply) => {
+  const body = request.body as { name?: string; website?: string; verifiedDomain?: string; description?: string; industry?: string; headquarters?: string; companySize?: string; prospectStatus?: string; prospectNotes?: string; followUpAt?: string | null; contactedAt?: string | null };
+  if (body.prospectStatus !== undefined && !['unreviewed', 'interesting', 'contacted', 'follow_up', 'not_interested'].includes(body.prospectStatus)) return reply.code(400).send({ error: 'Invalid prospect status' });
+  const fields: Array<[string, string | null | undefined]> = [['name', body.name], ['website', body.website], ['verified_domain', body.verifiedDomain], ['description', body.description], ['industry', body.industry], ['headquarters', body.headquarters], ['company_size', body.companySize], ['prospect_status', body.prospectStatus], ['prospect_notes', body.prospectNotes], ['follow_up_at', body.followUpAt], ['contacted_at', body.contactedAt]];
+  const assignments: string[] = [];
+  const values: unknown[] = [];
+  for (const [field, value] of fields) if (value !== undefined) { values.push(value === null ? null : value.trim()); assignments.push(`${field}=$${values.length}`); }
+  if (!assignments.length) return reply.code(400).send({ error: 'No changes supplied' });
+  values.push((request.params as { id: string }).id);
+  const result = await pool.query(`UPDATE employers SET ${assignments.join(', ')}, updated_at=now() WHERE id=$${values.length} RETURNING *`, values);
+  if (!result.rows[0]) return reply.code(404).send({ error: 'Company not found' });
+  return result.rows[0];
 });
 
 app.get('/api/listings/:id', async (request, reply) => {
