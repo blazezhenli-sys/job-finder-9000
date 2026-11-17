@@ -80,11 +80,16 @@ function boardIdentifier(value: unknown, providerName: AtsProvider): string {
 }
 
 app.get('/api/listings', async (request) => {
-  const query = request.query as { provider?: string; status?: string; employer?: string; locationFit?: string; workMode?: string; minScore?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
+  const query = request.query as { provider?: string; status?: string; employer?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; locationFit?: string; workMode?: string; minScore?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
   const values: unknown[] = []; const conditions: string[] = [];
   if (provider(query.provider)) { values.push(query.provider); conditions.push(`l.provider = $${values.length}`); }
   if (query.status && listingStatuses.includes(query.status as JobListingStatus)) { values.push(query.status); conditions.push(`l.status = $${values.length}`); }
   if (query.employer) { values.push(`%${query.employer}%`); conditions.push(`e.name ILIKE $${values.length}`); }
+  if (query.employmentType) { values.push(`%${query.employmentType}%`); conditions.push(`l.employment_type ILIKE $${values.length}`); }
+  if (query.seniority) { values.push(`%${query.seniority}%`); conditions.push(`l.seniority ILIKE $${values.length}`); }
+  if (query.location) { values.push(`%${query.location}%`); conditions.push(`(l.location ILIKE $${values.length} OR l.secondary_locations::text ILIKE $${values.length} OR l.geographic_restrictions::text ILIKE $${values.length})`); }
+  if (query.salaryCurrency) { values.push(query.salaryCurrency.toUpperCase()); conditions.push(`l.compensation_currency = $${values.length}`); }
+  if (query.minSalary && Number.isFinite(Number(query.minSalary))) { values.push(Number(query.minSalary)); conditions.push(`COALESCE(l.compensation_max, l.compensation_min) >= $${values.length}`); }
   if (query.locationFit && ['excellent', 'good', 'possible', 'poor', 'unknown'].includes(query.locationFit)) { values.push(query.locationFit); conditions.push(`l.location_fit = $${values.length}`); }
   if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`l.remote_mode = $${values.length}`); }
   if (query.minScore && Number.isFinite(Number(query.minScore))) { values.push(Number(query.minScore)); conditions.push(`l.personal_relevance >= $${values.length}`); }

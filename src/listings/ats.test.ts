@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseAdzunaJobs, parseAshbyJobs, parseGreenhouseJobs, parseLeverJobs, parseRemotiveJobs, stripListingHtml } from './ats.js';
+import { normalizeCompensation, parseAdzunaJobs, parseAshbyJobs, parseGreenhouseJobs, parseLeverJobs, parseRemotiveJobs, stripListingHtml } from './ats.js';
 
 describe('ATS adapters', () => {
+  it('normalizes structured and free-text compensation', () => {
+    expect(normalizeCompensation({ min: 100000, max: 140000, currency: 'USD', interval: 'year' })).toMatchObject({ min: 100000, max: 140000, currency: 'USD', period: 'year' });
+    expect(normalizeCompensation('$120k - $150k USD per year')).toMatchObject({ min: 120000, max: 150000, currency: 'USD', period: 'year' });
+  });
+
   it('normalizes Greenhouse postings and preserves the apply link', () => {
     const [job] = parseGreenhouseJobs({ jobs: [{ id: 42, title: 'Backend Engineer', content: '<p>Remote worldwide</p>', location: { name: 'Remote' }, absolute_url: 'https://boards.greenhouse.io/example/jobs/42', departments: [{ name: 'Engineering' }], updated_at: '2026-11-17T00:00:00Z' }] });
     expect(job.title).toBe('Backend Engineer');

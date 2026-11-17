@@ -30,6 +30,41 @@ function workMode(text: string, explicit?: unknown): WorkMode {
 }
 
 function stringValue(value: unknown): string { return typeof value === 'string' ? value.trim() : ''; }
+
+export type NormalizedCompensation = { min?: number; max?: number; currency?: string; period?: string; estimated?: boolean; description?: string };
+
+function numericValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value.replace(/[$€£¥₹,\s]/g, '').trim();
+  if (!cleaned) return undefined;
+  const multiplier = /k$/i.test(cleaned) ? 1_000 : 1;
+  const parsed = Number(cleaned.replace(/k$/i, '')) * multiplier;
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseCompensationText(value: string): NormalizedCompensation {
+  const numbers = [...value.matchAll(/(?:[$€£¥₹]\s*)?(\d[\d,]*(?:\.\d+)?\s*[kK]?)/g)].map((match) => numericValue(match[1])).filter((number): number is number => number !== undefined);
+  const currency = value.match(/\b(USD|EUR|GBP|CAD|AUD|SGD|HKD|TWD|JPY|CNY|INR)\b/i)?.[1]?.toUpperCase() || (value.match(/[$€£¥₹]/)?.[0] ?? '');
+  const period = value.match(/\b(hour|hourly|day|daily|week|weekly|month|monthly|year|annual|annually)\b/i)?.[1]?.toLowerCase();
+  return { min: numbers[0], max: numbers[1] ?? numbers[0], currency: currency || undefined, period, estimated: /estimate|predicted/i.test(value), description: value };
+}
+
+export function normalizeCompensation(value: unknown): NormalizedCompensation {
+  if (typeof value === 'string') return parseCompensationText(value);
+  if (!value || typeof value !== 'object') return {};
+  const source = value as Record<string, unknown>;
+  const nested = source.range && typeof source.range === 'object' ? source.range as Record<string, unknown> : source;
+  const description = stringValue(source.description || source.summary || source.salaryDescription);
+  const parsed = description ? parseCompensationText(description) : {};
+  const min = numericValue(nested.min ?? nested.minimum ?? nested.salary_min) ?? parsed.min;
+  const max = numericValue(nested.max ?? nested.maximum ?? nested.salary_max) ?? parsed.max;
+  const currency = stringValue(nested.currency || nested.currencyCode || nested.currency_code) || parsed.currency;
+  const period = stringValue(nested.period || nested.interval || nested.payPeriod || nested.frequency) || parsed.period;
+  const estimated = Boolean(nested.estimated ?? nested.isEstimated ?? nested.salary_is_predicted ?? parsed.estimated);
+  return { min, max, currency: currency || undefined, period: period || undefined, estimated, description: description || undefined };
+}
+
 function locations(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap((item) => typeof item === 'string' ? [item] : item && typeof item === 'object' ? [stringValue((item as { location?: unknown }).location)] : []).filter(Boolean);
   return value && typeof value === 'object' ? [stringValue((value as { name?: unknown }).name)].filter(Boolean) : [stringValue(value)].filter(Boolean);
