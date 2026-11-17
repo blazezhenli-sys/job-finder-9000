@@ -130,23 +130,24 @@ app.get('/api/job-boards', async (request) => {
 });
 
 app.get('/api/listing-poll-tasks', async (request) => {
-  const query = request.query as { status?: string; limit?: string };
-  const values: unknown[] = [];
-  const conditions: string[] = [];
-  if (query.status && ['queued', 'running', 'completed', 'failed'].includes(query.status)) { values.push(query.status); conditions.push(`t.status=$${values.length}`); }
-  const limit = Math.min(200, Math.max(1, Number(query.limit) || 100));
-  values.push(limit);
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const result = await pool.query(`SELECT t.*, b.provider, b.board_identifier, b.board_url, e.name AS employer_name,
-      ROUND(EXTRACT(EPOCH FROM (COALESCE(t.completed_at, now()) - t.started_at)) * 1000)::int AS duration_ms
-    FROM listing_poll_tasks t
-    JOIN job_boards b ON b.id=t.board_id
-    JOIN employers e ON e.id=b.employer_id
-    ${where}
-    ORDER BY CASE t.status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
-      COALESCE(t.started_at, t.queued_at) DESC
-    LIMIT $${values.length}`, values);
-  return { tasks: result.rows };
+  const query = request.query as { limit?: string; historyLimit?: string };
+  const activeLimit = Math.min(500, Math.max(1, Number(query.limit) || 200));
+  const historyLimit = Math.min(200, Math.max(1, Number(query.historyLimit) || 100));
+  const select = `SELECT t.*, b.provider, b.board_identifier, b.board_url, e.name AS employer_name,
+      ROUND(EXTRACT(EPOCH FROM (COALESCE(t.completed_at, now()) - t.started_at)) * 1000)::int AS duration_ms`;
+  const [active, history] = await Promise.all([
+    pool.query(`${select}, ROW_NUMBER() OVER (ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.queued_at)::int AS queue_position
+      FROM listing_poll_tasks t JOIN job_boards b ON b.id=t.board_id JOIN employers e ON e.id=b.employer_id
+      WHERE t.status IN ('queued', 'running')
+      ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.queued_at
+      LIMIT $1`, [activeLimit]),
+    pool.query(`${select}
+      FROM listing_poll_tasks t JOIN job_boards b ON b.id=t.board_id JOIN employers e ON e.id=b.employer_id
+      WHERE t.status IN ('completed', 'failed')
+      ORDER BY t.completed_at DESC NULLS LAST
+      LIMIT $1`, [historyLimit])
+  ]);
+  return { active: active.rows, history: history.rows, tasks: [...active.rows, ...history.rows] };
 });
 
 app.post('/api/job-boards', async (request, reply) => {
