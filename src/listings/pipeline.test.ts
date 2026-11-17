@@ -34,6 +34,18 @@ describe('listing scoring', () => {
     expect(result.locationFitReasons).toContain('On-site outside Taiwan');
   });
 
+  it('does not treat an employer statistic as worldwide candidate eligibility', () => {
+    const result = analyzeListing({
+      ...listing,
+      location: 'London, United Kingdom',
+      remoteMode: 'unknown',
+      description: 'More than 20,000 organizations worldwide rely on the company platform.'
+    }, defaultPreferences);
+    expect(result.locationSignals.workEligibility).toBe('country_specific');
+    expect(result.locationFit).toBe('unknown');
+    expect(result.locationFitScore).toBe(25);
+  });
+
   it('requires portable work for preferred-region and worldwide matches', () => {
     const onsite = analyzeListing({ ...listing, location: 'Singapore', remoteMode: 'onsite', description: 'Work with our APAC and worldwide customers.' }, defaultPreferences);
     expect(onsite.locationFit).toBe('poor');
