@@ -4,11 +4,11 @@ Self-hosted, deterministic hiring-signal monitoring for Bluesky, Hacker News, Ma
 
 ## Quick start
 
-1. Copy `.env.example` to `.env` and change `DASHBOARD_PASSWORD`.
+1. Copy `.env.example` to `.env`, change `DASHBOARD_PASSWORD`, and set `APP_PORT` if port 3000 is already in use.
 2. Run `docker compose up -d --build`.
 3. Open `http://your-server:3000` and sign in with the configured basic-auth credentials.
 
-Coolify can deploy this repository as a Docker Compose project. Keep the Postgres volume persistent. Set the same environment variables in Coolify; SMTP values stay server-side and are never returned by the API.
+Coolify can deploy this repository as a Docker Compose project. Set `APP_PORT` to the host port you want to publish; the application remains on internal container port 3000. Keep the Postgres volume persistent. Set the same environment variables in Coolify; SMTP values stay server-side and are never returned by the API.
 
 For local development, run PostgreSQL, set `DATABASE_URL`, then use `npm install && npm run dev`. Set `DEV_MODE=true` to enable the “Load sample posts” action in the dashboard. The app runs migrations automatically at startup.
 
