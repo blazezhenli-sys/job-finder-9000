@@ -1,6 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { opportunities: [], rules: [], settings: null, listingPage: 0, listingTotal: 0, boardPage: 0, boardTotal: 0, companyPage: 0, companyTotal: 0 };
 const directoryProspectStatus = $('#company-prospect-status'); if (directoryProspectStatus) directoryProspectStatus.id = 'company-directory-prospect-status';
+$('#company-sort')?.insertAdjacentHTML('afterbegin', '<option value="score">Highest prospect score</option>');
 let listingRefreshTimer;
 let listingRefreshInFlight = false;
 let listingRefreshRequested = false;
