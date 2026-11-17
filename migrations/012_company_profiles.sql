@@ -10,6 +10,7 @@ ALTER TABLE employers ADD COLUMN IF NOT EXISTS contacted_at timestamptz;
 
 ALTER TABLE job_listings ADD COLUMN IF NOT EXISTS engineering_specialties jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE job_listings ADD COLUMN IF NOT EXISTS technologies jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE job_listings ADD COLUMN IF NOT EXISTS company_metadata_backfilled_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS listing_board_observations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -26,6 +27,7 @@ CREATE INDEX IF NOT EXISTS employers_name_idx ON employers (lower(name));
 CREATE INDEX IF NOT EXISTS employers_verified_domain_idx ON employers (lower(verified_domain));
 CREATE INDEX IF NOT EXISTS job_listings_engineering_specialties_idx ON job_listings USING gin (engineering_specialties);
 CREATE INDEX IF NOT EXISTS job_listings_technologies_idx ON job_listings USING gin (technologies);
+CREATE INDEX IF NOT EXISTS job_listings_company_metadata_backfill_idx ON job_listings (company_metadata_backfilled_at) WHERE company_metadata_backfilled_at IS NULL;
 CREATE INDEX IF NOT EXISTS listing_board_observations_board_time_idx ON listing_board_observations (board_id, observed_at DESC);
 
 -- Existing listings are classified asynchronously after the application starts.

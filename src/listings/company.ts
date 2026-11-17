@@ -60,12 +60,13 @@ export async function backfillListingMetadata() {
   if (marker.rows[0]) return;
   let processed = 0;
   while (true) {
-    const result = await pool.query(`SELECT id, title, description, department, team FROM job_listings WHERE engineering_specialties='[]'::jsonb OR technologies='[]'::jsonb ORDER BY id LIMIT 500`);
+    const result = await pool.query(`SELECT id, title, description, department, team FROM job_listings WHERE company_metadata_backfilled_at IS NULL ORDER BY id LIMIT 500`);
     if (!result.rows.length) break;
     const updates = result.rows.map((row) => ({ id: row.id, engineering_specialties: classifyEngineeringSpecialties(row), technologies: extractListingTechnologies(row) }));
     await pool.query(`UPDATE job_listings AS listing
       SET engineering_specialties=CASE WHEN listing.engineering_specialties='[]'::jsonb THEN updates.engineering_specialties ELSE listing.engineering_specialties END,
           technologies=CASE WHEN listing.technologies='[]'::jsonb THEN updates.technologies ELSE listing.technologies END,
+          company_metadata_backfilled_at=now(),
           updated_at=now()
       FROM jsonb_to_recordset($1::jsonb) AS updates(id uuid, engineering_specialties jsonb, technologies jsonb)
       WHERE listing.id=updates.id`, [JSON.stringify(updates)]);
