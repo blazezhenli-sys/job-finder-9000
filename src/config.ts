@@ -1,0 +1,58 @@
+import process from 'node:process';
+
+const bool = (value: string | undefined, fallback: boolean) => value === undefined ? fallback : value.toLowerCase() === 'true';
+const num = (value: string | undefined, fallback: number) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+
+export interface MastodonEndpoint { url: string; accessToken: string }
+
+function mastodonEndpoints(): MastodonEndpoint[] {
+  const legacyToken = process.env.MASTODON_ACCESS_TOKEN ?? '';
+  const tokenMap = (() => { try { return JSON.parse(process.env.MASTODON_TOKENS_JSON ?? '{}') as Record<string, string>; } catch { return {}; } })();
+  const raw = process.env.MASTODON_ENDPOINTS?.trim();
+  let values: Array<string | { url?: string; accessToken?: string }> = [];
+  if (raw) {
+    try { values = JSON.parse(raw) as Array<string | { url?: string; accessToken?: string }>; }
+    catch { values = raw.split(',').map((url) => url.trim()); }
+  } else if (process.env.MASTODON_INSTANCES) {
+    values = process.env.MASTODON_INSTANCES.split(',').map((url) => url.trim());
+  } else {
+    values = ['mastodon.social', 'hachyderm.io', 'infosec.exchange'];
+  }
+  return values.map((value, index) => {
+    const url = typeof value === 'string' ? value : value.url ?? '';
+    const host = url.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase();
+    return { url, accessToken: typeof value === 'string' ? tokenMap[host] ?? (index === 0 ? legacyToken : '') : value.accessToken ?? tokenMap[host] ?? (index === 0 ? legacyToken : '') };
+  }).filter((endpoint) => endpoint.url);
+}
+
+export const config = {
+  nodeEnv: process.env.NODE_ENV ?? 'development',
+  port: num(process.env.PORT, 3000),
+  databaseUrl: process.env.DATABASE_URL ?? 'postgres://hiring:hiring@localhost:5432/hiring',
+  dashboardUsername: process.env.DASHBOARD_USERNAME ?? 'admin',
+  dashboardPassword: process.env.DASHBOARD_PASSWORD ?? 'change-me',
+  enableBluesky: bool(process.env.ENABLE_BLUESKY, true),
+  jetstreamUrl: process.env.BLUESKY_JETSTREAM_URL ?? 'wss://jetstream1.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post',
+  enableHackerNews: bool(process.env.ENABLE_HACKER_NEWS, true),
+  hnPollIntervalMs: num(process.env.HN_POLL_INTERVAL_MS, 30_000),
+  enableMastodon: bool(process.env.ENABLE_MASTODON, false),
+  mastodonEndpoints: mastodonEndpoints(),
+  enableReddit: bool(process.env.ENABLE_REDDIT, false),
+  redditClientId: process.env.REDDIT_CLIENT_ID ?? '',
+  redditClientSecret: process.env.REDDIT_CLIENT_SECRET ?? '',
+  redditUserAgent: process.env.REDDIT_USER_AGENT ?? 'hiring-signal-discovery/0.1 by personal-use',
+  redditSubreddits: (process.env.REDDIT_SUBREDDITS ?? 'forhire,startups,Entrepreneur,remotejs').split(',').map((value) => value.trim().replace(/^r\//, '')).filter(Boolean),
+  redditPollIntervalMs: num(process.env.REDDIT_POLL_INTERVAL_MS, 60_000),
+  devMode: bool(process.env.DEV_MODE, false),
+  notifyRecovered: bool(process.env.NOTIFY_RECOVERED, false),
+  retentionDays: num(process.env.RETENTION_DAYS, 30),
+  smtp: {
+    host: process.env.SMTP_HOST ?? '',
+    port: num(process.env.SMTP_PORT, 587),
+    secure: bool(process.env.SMTP_SECURE, false),
+    user: process.env.SMTP_USER ?? '',
+    password: process.env.SMTP_PASSWORD ?? '',
+    from: process.env.SMTP_FROM ?? '',
+    recipient: process.env.NOTIFICATION_EMAIL ?? ''
+  }
+};
