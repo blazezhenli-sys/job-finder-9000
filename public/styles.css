@@ -5,3 +5,4 @@
 .location-pill{background:#eef8f2;color:#236447}
 .location-fit-excellent{background:#dff5e7;color:#17633b}.location-fit-good{background:#e7f4ec;color:#236447}.location-fit-possible{background:#fff3d6;color:#8a5a00}.location-fit-poor{background:#ffe5e1;color:#a63b2b}.location-fit-unknown{background:#edf0f2;color:#5d696e}
 .opportunity>div:nth-of-type(2) .pill.orange{display:none}
+.classification-editor label:has(#detail-suppressed){display:none}

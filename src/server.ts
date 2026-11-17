@@ -44,7 +44,6 @@ app.get('/api/opportunities', async (request) => {
   if (query.signalCategory && ['direct_hiring', 'software_request', 'employee_referral', 'firsthand_announcement', 'aggregated_listing', 'uncertain'].includes(query.signalCategory)) { values.push(query.signalCategory); conditions.push(`signal_category = $${values.length}`); }
   if (query.locationFit && ['excellent', 'good', 'possible', 'poor', 'unknown'].includes(query.locationFit)) { values.push(query.locationFit); conditions.push(`location_fit = $${values.length}`); }
   if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`location_signals->>'workMode' = $${values.length}`); }
-  if (query.includeSuppressed !== 'true') conditions.push('suppressed = false');
   const sort = query.sort === 'location' ? 'location_fit_score DESC, signal_quality DESC, personal_relevance DESC, published_at DESC' : query.sort === 'score' ? 'personal_relevance DESC, signal_quality DESC, published_at DESC' : query.sort === 'quality' ? 'signal_quality DESC, personal_relevance DESC, published_at DESC' : query.sort === 'published' ? 'published_at DESC' : 'first_seen_at DESC';
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
   const offset = Math.max(0, Number(query.offset) || 0);
