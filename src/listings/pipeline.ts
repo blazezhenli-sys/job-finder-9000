@@ -1,9 +1,28 @@
 import { evaluateLocationFit, extractLocationSignals } from '../pipeline.js';
-import type { ListingAnalysis, NormalizedJobListing, Preferences, ScoreContribution } from '../types.js';
+import type { ListingAnalysis, LocationSignals, NormalizedJobListing, Preferences, ScoreContribution } from '../types.js';
 
 function matches(text: string, term: string): boolean { const escaped = term.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'); return Boolean(escaped) && new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(text); }
 function terms(text: string, list: string[]): string[] { return list.filter((term) => matches(text, term)); }
 function add(list: ScoreContribution[], label: string, points: number, evidence: string[]) { if (points > 0) list.push({ label, points, evidence }); }
+
+function listingLocationSignals(listing: NormalizedJobListing): LocationSignals {
+  // ATS location fields describe where the candidate may work.  Keep them
+  // separate from the description: descriptions frequently mention offices,
+  // customers, and markets that are unrelated to candidate eligibility.
+  const structuredText = [listing.location, ...(listing.secondaryLocations ?? []), ...(listing.geographicRestrictions ?? [])].filter(Boolean).join('\n');
+  const structured = extractLocationSignals(structuredText);
+  const workMode = listing.remoteMode ?? extractLocationSignals(listing.description).workMode;
+
+  return {
+    ...structured,
+    workMode,
+    // Do not let incidental prose override the structured ATS location. A
+    // description can mention customers, offices, or markets without saying
+    // where this particular job may be performed.
+    timezoneRequirements: structured.timezoneRequirements,
+    evidence: structured.evidence
+  };
+}
 
 export function analyzeListing(listing: NormalizedJobListing, preferences: Preferences): ListingAnalysis {
   const text = [listing.title, listing.description, listing.department, listing.team, listing.location, ...(listing.secondaryLocations ?? []), ...(listing.geographicRestrictions ?? [])].filter(Boolean).join('\n');
@@ -18,8 +37,7 @@ export function analyzeListing(listing: NormalizedJobListing, preferences: Prefe
   add(breakdown, 'Remote preference', listing.remoteMode === 'remote' || listing.remoteMode === 'hybrid' ? 15 : Math.min(8, remoteTerms.length * 4), listing.remoteMode && listing.remoteMode !== 'unknown' ? [listing.remoteMode] : remoteTerms);
   add(breakdown, 'International signal', Math.min(12, internationalTerms.length * 6), internationalTerms);
   add(breakdown, 'Contract / freelance', Math.min(12, contractTerms.length * 6), contractTerms);
-  const locationSignals = extractLocationSignals(text);
-  if (listing.remoteMode && listing.remoteMode !== 'unknown') locationSignals.workMode = listing.remoteMode;
+  const locationSignals = listingLocationSignals(listing);
   const location = evaluateLocationFit(locationSignals, preferences);
   const personalRelevance = Math.min(100, Math.round(breakdown.reduce((total, item) => total + item.points, 0)));
   return { technologies: technologyTerms, employmentType: listing.employmentType ?? (contractTerms.length ? 'contract/freelance' : ''), personalRelevance, relevanceBreakdown: breakdown, locationSignals, locationFit: location.fit, locationFitScore: location.score, locationFitReasons: location.reasons };

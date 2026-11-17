@@ -87,8 +87,13 @@ export function evaluateLocationFit(signals: LocationSignals, preferences: Prefe
   if (signals.workMode === 'onsite' && !taiwanMatch) return { fit: 'poor', score: 5, reasons: [`On-site outside ${profile.baseLocation}`] };
   if (signals.constraint === 'restricted' && signals.workEligibility === 'country_specific' && !taiwanMatch) return { fit: 'poor', score: 15, reasons: [`Restricted to ${signals.locations.join(', ') || 'a specific location'}`] };
   if (taiwanMatch) { reasons.push(`${profile.baseLocation} explicitly included`); return { fit: 'excellent', score: 100, reasons }; }
-  if (signals.workEligibility === 'worldwide') { reasons.push('Worldwide or globally open'); return { fit: 'excellent', score: 95, reasons }; }
-  if (regionMatch || timezoneMatch) { reasons.push(regionMatch ? `${signals.regions.join(', ')} matches preferred regions` : `Timezone appears compatible with ${profile.timeZone}`); return { fit: 'excellent', score: 85, reasons }; }
+  // A region or timezone mention only helps when the listing is actually
+  // portable.  Without this guard, ordinary description text such as
+  // "customers in Asia" or "our worldwide team" makes an onsite job look
+  // excellent for every user in that region.
+  const portable = signals.workMode === 'remote' || signals.workMode === 'hybrid';
+  if (portable && signals.workEligibility === 'worldwide') { reasons.push('Worldwide or globally open'); return { fit: 'excellent', score: 95, reasons }; }
+  if (portable && (regionMatch || timezoneMatch)) { reasons.push(regionMatch ? `${signals.regions.join(', ')} matches preferred regions` : `Timezone appears compatible with ${profile.timeZone}`); return { fit: 'excellent', score: 85, reasons }; }
   if (signals.workMode === 'remote' && signals.constraint !== 'restricted') { reasons.push('Remote with no explicit location restriction'); return { fit: 'good', score: 70, reasons }; }
   if (signals.workMode === 'hybrid') return { fit: 'possible', score: 40, reasons: ['Hybrid role needs location confirmation'] };
   if (signals.workMode === 'remote') return { fit: 'possible', score: 45, reasons: ['Remote, but location eligibility is unclear'] };

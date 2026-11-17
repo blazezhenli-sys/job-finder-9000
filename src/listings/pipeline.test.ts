@@ -21,4 +21,29 @@ describe('listing scoring', () => {
     expect(result.locationFit).toBe('poor');
     expect(result.locationFitScore).toBeLessThan(40);
   });
+
+  it('uses the normalized ATS location instead of incidental description mentions', () => {
+    const result = analyzeListing({
+      ...listing,
+      location: 'New York, United States',
+      remoteMode: 'onsite',
+      description: 'Join our worldwide team serving customers across Asia and Taiwan.'
+    }, defaultPreferences);
+    expect(result.locationFit).toBe('poor');
+    expect(result.locationFitScore).toBeLessThan(40);
+    expect(result.locationFitReasons).toContain('On-site outside Taiwan');
+  });
+
+  it('requires portable work for preferred-region and worldwide matches', () => {
+    const onsite = analyzeListing({ ...listing, location: 'Singapore', remoteMode: 'onsite', description: 'Work with our APAC and worldwide customers.' }, defaultPreferences);
+    expect(onsite.locationFit).toBe('poor');
+
+    const remote = analyzeListing({ ...listing, location: 'APAC', remoteMode: 'remote', description: 'Remote engineering role.' }, defaultPreferences);
+    expect(remote.locationFit).toBe('excellent');
+    expect(remote.locationFitScore).toBeGreaterThanOrEqual(85);
+
+    const incidental = analyzeListing({ ...listing, location: '', remoteMode: 'remote', description: 'Remote role serving customers across APAC and Taiwan.' }, defaultPreferences);
+    expect(incidental.locationFit).toBe('good');
+    expect(incidental.locationFitScore).toBe(70);
+  });
 });
