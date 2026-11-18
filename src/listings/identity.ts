@@ -11,9 +11,19 @@ export type CompanyIdentity = {
   evidence: Record<string, unknown>;
 };
 
-const atsDomains = new Set(['boards.greenhouse.io', 'job-boards.greenhouse.io', 'jobs.ashbyhq.com', 'jobs.lever.co']);
+// Include hosted-board and vendor-marketing domains. Neither is an employer
+// identity, including their CDN/subdomain variants.
+const atsDomains = new Set([
+  'greenhouse.com', 'greenhouse.io', 'boards.greenhouse.io', 'job-boards.greenhouse.io',
+  'ashbyhq.com', 'jobs.ashbyhq.com',
+  'lever.co', 'jobs.lever.co'
+]);
 const blockedDomains = new Set(['linkedin.com', 'twitter.com', 'x.com', 'facebook.com', 'instagram.com', 'youtube.com', 'github.com']);
 const genericNames = /^(?:careers?|jobs?|job board|job openings?|greenhouse|ashby|lever|apply|home|homepage|company|our company)$/i;
+
+function isAtsHost(host: string): boolean {
+  return [...atsDomains].some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -47,7 +57,7 @@ export function normalizeCompanyDomain(value: string): string {
   // A relative link such as `about-us` must not become a company domain.
   // Requiring a dotted hostname also filters localhost-like values and other
   // path fragments that URL() accepts as hosts when given a synthetic scheme.
-  if (!host || !host.includes('.') || host.includes('..') || atsDomains.has(host) || blockedDomains.has(host) || [...blockedDomains].some((domain) => host.endsWith(`.${domain}`))) return '';
+  if (!host || !host.includes('.') || host.includes('..') || isAtsHost(host) || blockedDomains.has(host) || [...blockedDomains].some((domain) => host.endsWith(`.${domain}`))) return '';
   return host;
 }
 
@@ -55,7 +65,7 @@ export function isAtsDomain(value: string): boolean {
   const raw = text(value);
   try {
     const host = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase().replace(/^www\./, '');
-    return atsDomains.has(host);
+    return isAtsHost(host);
   } catch { return false; }
 }
 

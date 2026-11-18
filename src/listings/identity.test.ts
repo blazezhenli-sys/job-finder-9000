@@ -6,6 +6,8 @@ describe('company identity resolution', () => {
     expect(normalizeCompanyName('Example, Inc.')).toBe('example');
     expect(normalizeCompanyDomain('https://www.example.com/careers')).toBe('example.com');
     expect(normalizeCompanyDomain('https://jobs.ashbyhq.com/example')).toBe('');
+    expect(normalizeCompanyDomain('https://www.greenhouse.com')).toBe('');
+    expect(normalizeCompanyDomain('https://s8-recruiting.cdn.greenhouse.io/logo.png')).toBe('');
   });
 
   it('extracts a company name and domain from organization JSON-LD', () => {
