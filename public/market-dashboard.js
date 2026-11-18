@@ -129,7 +129,7 @@
         const raw = valuesFor(entry, key);
         const value = field === 'share' ? (entry.total ? raw / entry.total : 0) : raw;
         stack += value;
-        return '<circle cx="' + x(index) + '" cy="' + y(stack) + '" r="7" class="chart-point"><title>' + esc(String(entry.period).slice(0, 10)) + ' · ' + esc(label(key === '__other' ? 'Other' : key)) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()) + '</title></circle>';
+        return '<circle cx="' + x(index) + '" cy="' + y(stack) + '" r="7" class="chart-point" data-tooltip="' + esc(String(entry.period).slice(0, 10) + ' · ' + label(key === '__other' ? 'Other' : key) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString())) + '"><title>' + esc(String(entry.period).slice(0, 10)) + ' · ' + esc(label(key === '__other' ? 'Other' : key)) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()) + '</title></circle>';
       }).join('');
     }).join('');
     const labels = grouped.rows.filter((entry, index) => index === 0 || index === grouped.rows.length - 1 || index % Math.max(1, Math.floor(grouped.rows.length / 4)) === 0).map((entry) => {
@@ -154,7 +154,7 @@
       const scale = (plotHeight / 2) / maxValue;
       const x = left + (grouped.rows.length < 2 ? plotWidth / 2 : (index / (grouped.rows.length - 1)) * plotWidth);
       const addedHeight = added * scale, removedHeight = removed * scale;
-      return '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight / 2 - addedHeight) + '" width="' + (barWidth / 2 - 1) + '" height="' + addedHeight + '" class="flow-new"><title>' + esc(entry.period) + ': +' + added.toLocaleString() + ' new</title></rect><rect x="' + (x + 1) + '" y="' + (top + plotHeight / 2) + '" width="' + (barWidth / 2 - 1) + '" height="' + removedHeight + '" class="flow-removed"><title>' + esc(entry.period) + ': ' + removed.toLocaleString() + ' removed</title></rect>';
+      return '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight / 2 - addedHeight) + '" width="' + (barWidth / 2 - 1) + '" height="' + addedHeight + '" class="flow-new chart-hover-target" data-tooltip="' + esc(String(entry.period) + ' · New observed: +' + added.toLocaleString()) + '"><title>' + esc(entry.period) + ': +' + added.toLocaleString() + ' new</title></rect><rect x="' + (x + 1) + '" y="' + (top + plotHeight / 2) + '" width="' + (barWidth / 2 - 1) + '" height="' + removedHeight + '" class="flow-removed chart-hover-target" data-tooltip="' + esc(String(entry.period) + ' · Removed observed: ' + removed.toLocaleString()) + '"><title>' + esc(entry.period) + ': ' + removed.toLocaleString() + ' removed</title></rect>';
     }).join('');
     const labels = grouped.rows.filter((entry, index) => index === 0 || index === grouped.rows.length - 1 || index % Math.max(1, Math.floor(grouped.rows.length / 4)) === 0).map((entry) => {
       const index = grouped.periods.indexOf(entry.period);
@@ -205,9 +205,29 @@
     document.querySelector('#market-flow-chart').innerHTML = flowSvg(data);
     renderRankings(data);
     renderSignals(data);
+    bindChartTooltips();
     document.querySelectorAll('.market-sector-key').forEach((button) => button.addEventListener('click', () => { state.focus = state.focus === button.dataset.sector ? '' : button.dataset.sector; persist(); render(data); }));
     document.querySelectorAll('.market-evidence-button').forEach((button) => button.addEventListener('click', () => openEvidence(button.dataset.sector)));
     document.querySelectorAll('.market-signal-evidence-button').forEach((button) => button.addEventListener('click', () => openSignalEvidence(button.dataset.signalId).catch(console.error)));
+  }
+
+  function bindChartTooltips() {
+    document.querySelectorAll('.market-chart').forEach((chart) => {
+      let tooltip = chart.querySelector('.market-chart-tooltip');
+      if (!tooltip) {
+        chart.insertAdjacentHTML('beforeend', '<div class="market-chart-tooltip" role="status"></div>');
+        tooltip = chart.querySelector('.market-chart-tooltip');
+      }
+      chart.querySelectorAll('[data-tooltip]').forEach((target) => {
+        target.addEventListener('mouseenter', () => { tooltip.textContent = target.dataset.tooltip; tooltip.classList.add('visible'); });
+        target.addEventListener('mousemove', (event) => {
+          const bounds = chart.getBoundingClientRect();
+          tooltip.style.left = Math.max(8, Math.min(event.clientX - bounds.left + 12, bounds.width - tooltip.offsetWidth - 8)) + 'px';
+          tooltip.style.top = Math.max(8, event.clientY - bounds.top - tooltip.offsetHeight - 10) + 'px';
+        });
+        target.addEventListener('mouseleave', () => tooltip.classList.remove('visible'));
+      });
+    });
   }
 
   async function loadDashboard() {
