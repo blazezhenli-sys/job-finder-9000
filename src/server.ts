@@ -8,7 +8,7 @@ import { events, processPost } from './pipeline-service.js';
 import { createDiscoveryJob, getDiscoveryJobs } from './listings/discovery.js';
 import { calculateProspectScore, engineeringSpecialtyLabels } from './listings/company.js';
 import { getMarketSummary, type MarketQuery } from './listings/market.js';
-import { jobCategoryLabels } from './listings/classification.js';
+import { jobCategoryLabels, loadTechnologyTaxonomy } from './listings/classification.js';
 import { getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 
@@ -54,6 +54,17 @@ app.get('/api/market/signals', async (request) => {
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
   const result = await pool.query(`SELECT s.*, e.name AS employer_name FROM market_signals s LEFT JOIN employers e ON e.id=s.employer_id WHERE s.status='active' ORDER BY s.last_seen_at DESC LIMIT $1`, [limit]);
   return { signals: result.rows };
+});
+
+app.get('/api/market/taxonomy/technologies', async () => ({ terms: (await pool.query('SELECT canonical, alias, enabled, classification_version FROM listing_technology_aliases ORDER BY canonical, alias')).rows }));
+
+app.patch('/api/market/taxonomy/technologies', async (request, reply) => {
+  const body = request.body as { canonical?: string; alias?: string; enabled?: boolean };
+  if (!body.canonical?.trim() || !body.alias?.trim()) return reply.code(400).send({ error: 'canonical and alias are required' });
+  const result = await pool.query(`INSERT INTO listing_technology_aliases (canonical, alias, enabled)
+    VALUES ($1,$2,$3) ON CONFLICT (canonical, alias) DO UPDATE SET enabled=EXCLUDED.enabled RETURNING *`, [body.canonical.trim().toLowerCase(), body.alias.trim().toLowerCase(), body.enabled !== false]);
+  await loadTechnologyTaxonomy();
+  return result.rows[0];
 });
 
 app.get('/api/market/compare', async (request, reply) => {
@@ -223,7 +234,7 @@ app.get('/api/companies/:id', async (request, reply) => {
   const id = (request.params as { id: string }).id;
   const company = await pool.query(`SELECT id, name, website, verified_domain, description, industry, headquarters, company_size, prospect_status, prospect_notes, follow_up_at, contacted_at, first_discovered_at, updated_at FROM employers WHERE id=$1`, [id]);
   if (!company.rows[0]) return reply.code(404).send({ error: 'Company not found' });
-  const [boards, summary, specialties, listings, activity] = await Promise.all([
+  const [boards, summary, specialties, listings, activity, dailyActivity, storedSignals] = await Promise.all([
     pool.query(`SELECT b.*, count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1 GROUP BY b.id ORDER BY b.status, b.provider, b.board_identifier`, [id]),
     pool.query(`SELECT count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
       count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering_count,
@@ -236,15 +247,17 @@ app.get('/api/companies/:id', async (request, reply) => {
     pool.query(`SELECT specialty_values.value AS specialty, count(*)::int AS listing_count FROM job_listings l JOIN job_boards b ON b.id=l.board_id CROSS JOIN LATERAL jsonb_array_elements_text(l.engineering_specialties) AS specialty_values(value) WHERE b.employer_id=$1 AND l.is_active GROUP BY specialty_values.value ORDER BY listing_count DESC, specialty_values.value`, [id]),
     pool.query(`SELECT l.id, l.title, l.department, l.location, l.remote_mode, l.employment_type, l.seniority, l.application_url, l.original_url, l.source_updated_at, l.first_observed_at, l.engineering_specialties, l.technologies, l.location_fit, l.location_fit_score, b.provider, b.board_identifier FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=$1 AND l.is_active ORDER BY l.source_updated_at DESC NULLS LAST, l.first_observed_at DESC LIMIT 100`, [id])
     ,pool.query(`SELECT date_trunc('day', o.observed_at) AS day, sum(o.listings_seen)::int AS listings_seen, sum(o.active_engineering)::int AS active_engineering, sum(o.new_listings)::int AS new_listings, sum(o.new_engineering)::int AS new_engineering, sum(o.missing_listings)::int AS missing_listings FROM listing_board_observations o JOIN job_boards b ON b.id=o.board_id WHERE b.employer_id=$1 GROUP BY date_trunc('day', o.observed_at) ORDER BY day ASC LIMIT 180`, [id])
+    ,pool.query(`SELECT snapshot_date AS day, active_listings AS listings_seen, active_engineering, new_listings AS new_engineering, new_listings, removed_listings AS missing_listings FROM company_daily_metrics WHERE employer_id=$1 ORDER BY snapshot_date ASC LIMIT 180`, [id]),
+    pool.query(`SELECT signal_type AS type, signal_type AS label, explanation, data_quality FROM market_signals WHERE employer_id=$1 AND status='active' ORDER BY last_seen_at DESC LIMIT 25`, [id])
   ]);
   const summaryRow = summary.rows[0] ?? {};
   const prospect = calculateProspectScore({ activeEngineering: Number(summaryRow.active_engineering_count), newEngineering7d: Number(summaryRow.new_listing_count_7d), contractListings: Number(summaryRow.contract_listing_count), remoteListings: Number(summaryRow.remote_listing_count), hasRecentActivity: Boolean(summaryRow.last_successful_monitoring && new Date(summaryRow.last_successful_monitoring).getTime() >= Date.now() - 30 * 86_400_000) });
   const signals: Array<{ type: string; label: string; explanation: string }> = [];
-  const recentNewEngineering = activity.rows.filter((row) => new Date(row.day).getTime() >= Date.now() - 30 * 86_400_000).reduce((total, row) => total + Number(row.new_engineering), 0);
+  const recentNewEngineering = (dailyActivity.rows.length ? dailyActivity.rows : activity.rows).filter((row) => new Date(row.day).getTime() >= Date.now() - 30 * 86_400_000).reduce((total, row) => total + Number(row.new_engineering), 0);
   if (recentNewEngineering >= 3) signals.push({ type: 'engineering_expansion', label: 'Engineering hiring expansion', explanation: `${recentNewEngineering} engineering openings were observed after board baselines in the last 30 days.` });
   if (Number(summaryRow.contract_listing_count) > 0) signals.push({ type: 'contract_hiring', label: 'Contract-friendly evidence', explanation: `${summaryRow.contract_listing_count} active listing${Number(summaryRow.contract_listing_count) === 1 ? '' : 's'} explicitly mention contract work.` });
   if ((specialties.rows as Array<{ specialty: string }>).some((row) => row.specialty === 'infrastructure_devops')) signals.push({ type: 'infrastructure_demand', label: 'Infrastructure demand', explanation: 'Active listings include infrastructure, DevOps, platform, or SRE specialties.' });
-  return { company: { ...company.rows[0], prospect_score: prospect.score, prospect_score_factors: prospect.factors }, boards: boards.rows, summary: summaryRow, specialties: specialties.rows.map((row) => ({ ...row, label: engineeringSpecialtyLabels[row.specialty] || row.specialty })), listings: listings.rows, activity: activity.rows, signals };
+  return { company: { ...company.rows[0], prospect_score: prospect.score, prospect_score_factors: prospect.factors }, boards: boards.rows, summary: summaryRow, specialties: specialties.rows.map((row) => ({ ...row, label: engineeringSpecialtyLabels[row.specialty] || row.specialty })), listings: listings.rows, activity: activity.rows, dailyActivity: dailyActivity.rows, signals: [...signals, ...storedSignals.rows] };
 });
 
 app.patch('/api/companies/:id', async (request, reply) => {

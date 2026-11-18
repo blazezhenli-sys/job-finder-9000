@@ -11,7 +11,7 @@ import { startListingPolling } from './listings/service.js';
 import { startListingDiscovery } from './listings/discovery.js';
 import { backfillListingMetadata } from './listings/company.js';
 import { backfillListingCompensation } from './listings/salary.js';
-import { backfillListingClassification } from './listings/classification.js';
+import { backfillListingClassification, loadTechnologyTaxonomy } from './listings/classification.js';
 import { detectMarketSignals, runDailyMarketSnapshot } from './listings/analytics.js';
 
 let started = false;
@@ -24,6 +24,7 @@ export async function startWorkers() {
   if (started) return;
   started = true;
   await migrate();
+  await loadTechnologyTaxonomy();
   if (config.enablePosts) {
     const reclassified = await reclassifyExistingOpportunities(true);
     if (reclassified) console.info(`Reclassified ${reclassified} historical opportunities without notifying`);

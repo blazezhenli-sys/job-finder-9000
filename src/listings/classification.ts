@@ -50,7 +50,7 @@ const specialtyPatterns: Array<[string, RegExp]> = [
   ['other_software', /\b(software engineer|software developer|engineering manager|engineering lead|developer)\b/i]
 ];
 
-const technologyTaxonomy: Array<{ label: string; aliases: string[] }> = [
+let technologyTaxonomy: Array<{ label: string; aliases: string[] }> = [
   { label: 'typescript', aliases: ['typescript', 'type script'] },
   { label: 'javascript', aliases: ['javascript', 'ecmascript'] },
   { label: 'python', aliases: ['python'] },
@@ -76,6 +76,14 @@ const technologyTaxonomy: Array<{ label: string; aliases: string[] }> = [
   { label: 'pytorch', aliases: ['pytorch'] },
   { label: 'tensorflow', aliases: ['tensorflow'] }
 ];
+
+export async function loadTechnologyTaxonomy() {
+  const result = await pool.query<{ canonical: string; alias: string }>('SELECT canonical, alias FROM listing_technology_aliases WHERE enabled=true ORDER BY canonical, alias');
+  if (!result.rows.length) return;
+  const grouped = new Map<string, string[]>();
+  for (const row of result.rows) grouped.set(row.canonical, [...(grouped.get(row.canonical) ?? []), row.alias]);
+  technologyTaxonomy = [...grouped.entries()].map(([label, aliases]) => ({ label, aliases }));
+}
 
 function body(listing: ListingText): string {
   return [listing.title, listing.description, listing.department, listing.team].filter(Boolean).join(' ');
