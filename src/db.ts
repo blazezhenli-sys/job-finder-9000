@@ -8,15 +8,32 @@ import type { DetectionRule, Preferences } from './types.js';
 const { Pool } = pg;
 export const pool = new Pool({ connectionString: config.databaseUrl, max: 10, idleTimeoutMillis: 30_000 });
 
-export async function migrate() {
+const migrationLock = [873291, 20261118];
+let migrationPromise: Promise<void> | undefined;
+
+async function runMigrations() {
   const client = await pool.connect();
+  let locked = false;
   try {
+    await client.query('SELECT pg_advisory_lock($1, $2)', migrationLock);
+    locked = true;
     const files = (await readdir(join(process.cwd(), 'migrations'))).filter((file) => file.endsWith('.sql')).sort();
     for (const file of files) await client.query(await readFile(join(process.cwd(), 'migrations', file), 'utf8'));
     await seedDefaults(client);
   } finally {
+    if (locked) await client.query('SELECT pg_advisory_unlock($1, $2)', migrationLock);
     client.release();
   }
+}
+
+export function migrate() {
+  if (!migrationPromise) {
+    migrationPromise = runMigrations().catch((error) => {
+      migrationPromise = undefined;
+      throw error;
+    });
+  }
+  return migrationPromise;
 }
 
 const defaultRules = [
