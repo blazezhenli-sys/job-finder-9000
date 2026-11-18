@@ -1,0 +1,32 @@
+import { describe, expect, it } from 'vitest';
+import { marketDashboardPeriods, marketDashboardRankings } from './analytics.js';
+
+describe('market dashboard calculations', () => {
+  it('creates an equal-length prior comparison period', () => {
+    expect(marketDashboardPeriods('2026-11-01', '2026-11-30')).toEqual({
+      previousFrom: '2026-10-02',
+      previousTo: '2026-10-31'
+    });
+  });
+
+  it('calculates ranking deltas against the prior period', () => {
+    const current = [
+      { snapshot_date: '2026-11-30', dimension_value: 'software_engineering', active_listings: 120, employers: 12, new_listings: 20, removed_listings: 4, active_share: 0.6, new_share: 0.5 },
+      { snapshot_date: '2026-11-30', dimension_value: 'product', active_listings: 80, employers: 8, new_listings: 20, removed_listings: 3, active_share: 0.4, new_share: 0.5 }
+    ];
+    const previous = [
+      { snapshot_date: '2026-10-31', dimension_value: 'software_engineering', active_listings: 100, active_share: 0.5 },
+      { snapshot_date: '2026-10-31', dimension_value: 'product', active_listings: 100, active_share: 0.5 }
+    ];
+    expect(marketDashboardRankings(current, previous)).toMatchObject([
+      { dimension_value: 'software_engineering', active_delta: 20, share_delta: 0.1, prior_active_listings: 100 },
+      { dimension_value: 'product', active_delta: -20, share_delta: -0.1, prior_active_listings: 100 }
+    ]);
+  });
+
+  it('handles an empty prior period without NaN values', () => {
+    const [ranking] = marketDashboardRankings([{ snapshot_date: '2026-11-30', dimension_value: 'unknown', active_listings: 4, active_share: 1 }], []);
+    expect(ranking).toMatchObject({ active_delta: 4, share_delta: 1, prior_active_listings: 0 });
+    expect(Number.isNaN(ranking.active_delta)).toBe(false);
+  });
+});

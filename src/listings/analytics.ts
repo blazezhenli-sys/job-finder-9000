@@ -162,6 +162,103 @@ export async function getMarketTrends(from: string, to: string, cohort = 'all', 
   return { from, to, cohort: safeCohort, dimension: safeDimension, granularity: safeGranularity, metrics: metrics.rows, coverage: runs.rows };
 }
 
+function shiftDate(value: string, days: number): string {
+  const date = new Date(value + 'T00:00:00Z');
+  date.setUTCDate(date.getUTCDate() + days);
+  return isoDate(date);
+}
+
+function periodDays(from: string, to: string): number {
+  return Math.max(1, Math.round((new Date(to + 'T00:00:00Z').getTime() - new Date(from + 'T00:00:00Z').getTime()) / 86400000) + 1);
+}
+
+function latestMetric(metrics: any[]) {
+  return metrics.length ? metrics[metrics.length - 1] : undefined;
+}
+
+export function marketDashboardPeriods(from: string, to: string) {
+  const previousTo = shiftDate(from, -1);
+  return { previousFrom: shiftDate(previousTo, -(periodDays(from, to) - 1)), previousTo };
+}
+
+export function marketDashboardRankings(currentMetrics: any[], previousMetrics: any[]) {
+  const currentLatest = latestMetric(currentMetrics);
+  const previousLatest = latestMetric(previousMetrics);
+  const previousByValue = new Map(previousLatest ? previousMetrics.filter((row: any) => row.snapshot_date === previousLatest.snapshot_date).map((row: any) => [row.dimension_value, row]) : []);
+  return (currentLatest ? currentMetrics.filter((row: any) => row.snapshot_date === currentLatest.snapshot_date) : [])
+    .map((row: any) => {
+      const prior = previousByValue.get(row.dimension_value);
+      return {
+        dimension_value: row.dimension_value,
+        active_listings: Number(row.active_listings || 0),
+        employers: Number(row.employers || 0),
+        new_listings: Number(row.new_listings || 0),
+        removed_listings: Number(row.removed_listings || 0),
+        active_share: Number(row.active_share || 0),
+        new_share: Number(row.new_share || 0),
+        share_delta: Math.round((Number(row.active_share || 0) - Number(prior?.active_share || 0)) * 1000000) / 1000000,
+        active_delta: Number(row.active_listings || 0) - Number(prior?.active_listings || 0),
+        prior_active_listings: Number(prior?.active_listings || 0)
+      };
+    })
+    .sort((a, b) => b.active_listings - a.active_listings || a.dimension_value.localeCompare(b.dimension_value));
+}
+
+export async function getMarketDashboard(from: string, to: string, cohort = 'stable_28d', dimension = 'category', granularity = 'week') {
+  const safeCohort = ['all', 'stable_28d'].includes(cohort) ? cohort : 'stable_28d';
+  const safeDimension = ['category', 'specialty', 'technology', 'region', 'country'].includes(dimension) ? dimension : 'category';
+  const safeGranularity = ['week', 'month'].includes(granularity) ? granularity : 'week';
+  const { previousFrom, previousTo } = marketDashboardPeriods(from, to);
+  const [current, previous, totalCurrent, totalPrevious, signals] = await Promise.all([
+    getMarketTrends(from, to, safeCohort, safeDimension, safeGranularity),
+    getMarketTrends(previousFrom, previousTo, safeCohort, safeDimension, safeGranularity),
+    getMarketTrends(from, to, safeCohort, 'all', safeGranularity),
+    getMarketTrends(previousFrom, previousTo, safeCohort, 'all', safeGranularity),
+    pool.query('SELECT s.*, e.name AS employer_name FROM market_signals s LEFT JOIN employers e ON e.id=s.employer_id WHERE s.status=\'active\' ORDER BY s.last_seen_at DESC LIMIT 12')
+  ]);
+  const rankings = marketDashboardRankings(current.metrics, previous.metrics);
+  const currentTotal = latestMetric(totalCurrent.metrics);
+  const previousTotal = latestMetric(totalPrevious.metrics);
+  const currentCoverage = current.coverage.at(-1) ?? null;
+  const previousCoverage = previous.coverage.at(-1) ?? null;
+  return {
+    from,
+    to,
+    previousFrom,
+    previousTo,
+    cohort: safeCohort,
+    dimension: safeDimension,
+    granularity: safeGranularity,
+    summary: {
+      active_listings: Number(currentTotal?.active_listings || 0),
+      new_listings: Number(currentTotal?.new_listings || 0),
+      removed_listings: Number(currentTotal?.removed_listings || 0),
+      employers: Number(currentTotal?.employers || 0),
+      remote_listings: Number(currentTotal?.remote_listings || 0),
+      contract_listings: Number(currentTotal?.contract_listings || 0),
+      remote_share: Number(currentTotal?.remote_share || 0),
+      contract_share: Number(currentTotal?.contract_share || 0),
+      prior_active_listings: Number(previousTotal?.active_listings || 0),
+      prior_new_listings: Number(previousTotal?.new_listings || 0),
+      active_delta: Number(currentTotal?.active_listings || 0) - Number(previousTotal?.active_listings || 0)
+    },
+    coverage: {
+      current: currentCoverage,
+      previous: previousCoverage,
+      snapshots: current.coverage.length,
+      monitored_boards: Number(currentCoverage?.monitored_boards || 0),
+      stable_boards: Number(currentCoverage?.stable_boards || 0),
+      monitored_employers: Number(currentCoverage?.monitored_employers || 0),
+      stable_employers: Number(currentCoverage?.stable_employers || 0),
+      newly_discovered_boards: Number(currentCoverage?.newly_discovered_boards || 0),
+      coverage_note: currentCoverage?.coverage_note || 'Snapshots begin after deployment.'
+    },
+    series: current.metrics,
+    rankings,
+    signals: signals.rows
+  };
+}
+
 export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
   await pool.query(`UPDATE market_signals SET status='resolved' WHERE status='active' AND last_seen_at < now() - interval '2 hours'`);
   const candidates = await pool.query(`WITH stats AS (

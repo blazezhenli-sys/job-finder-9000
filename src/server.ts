@@ -9,7 +9,7 @@ import { createDiscoveryJob, getDiscoveryJobs } from './listings/discovery.js';
 import { calculateProspectScore, engineeringSpecialtyLabels } from './listings/company.js';
 import { getMarketSummary, marketWhere, type MarketQuery } from './listings/market.js';
 import { jobCategoryLabels, LISTING_CLASSIFICATION_VERSION, loadTechnologyTaxonomy } from './listings/classification.js';
-import { getMarketTrends } from './listings/analytics.js';
+import { getMarketDashboard, getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 
 const app = Fastify({ logger: true });
@@ -42,6 +42,13 @@ app.get('/api/market/summary', async (request) => {
   return { ...(await getMarketSummary(query)), labels: { categories: jobCategoryLabels } };
 });
 
+app.get('/api/market/dashboard', async (request) => {
+  const query = request.query as { from?: string; to?: string; cohort?: string; dimension?: string; granularity?: string };
+  const to = query.to && !Number.isNaN(Date.parse(query.to)) ? query.to : new Date().toISOString().slice(0, 10);
+  const from = query.from && !Number.isNaN(Date.parse(query.from)) ? query.from : new Date(Date.now() - 89 * 86400000).toISOString().slice(0, 10);
+  return { ...(await getMarketDashboard(from, to, query.cohort, query.dimension, query.granularity)), labels: { categories: jobCategoryLabels } };
+});
+
 app.get('/api/market/drilldown', async (request, reply) => {
   const query = request.query as MarketQuery & { dimension?: string; value?: string; limit?: string; offset?: string; from?: string; to?: string };
   const predicates: Record<string, string> = {
@@ -70,7 +77,10 @@ app.get('/api/market/drilldown', async (request, reply) => {
     pool.query(`SELECT e.id AS employer_id, e.name AS employer_name, count(*)::int AS listings, count(*) FILTER (WHERE jsonb_array_length(COALESCE(l.engineering_specialties,'[]'::jsonb)) > 0)::int AS engineering, count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote, count(*) FILTER (WHERE l.first_observed_at >= now() - interval '7 days')::int AS new_last_7_days FROM ${from} WHERE ${where} GROUP BY e.id, e.name ORDER BY listings DESC, e.name LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]),
     pool.query(`SELECT count(DISTINCT e.id)::int AS count FROM ${from} WHERE ${where}`, values)
   ]);
-  return { dimension: query.dimension, value: query.value, companies: companies.rows, total: total.rows[0].count, limit, offset };
+  const evidenceLimit = Math.min(50, Math.max(1, Number(query.limit) || 25));
+  const evidenceOffset = Math.max(0, Number(query.offset) || 0);
+  const evidence = await pool.query('SELECT l.id, l.title, l.location, l.remote_mode, l.job_category, l.primary_specialty, l.application_url, l.original_url, l.first_observed_at, l.source_updated_at, b.provider, b.board_identifier, e.id AS employer_id, e.name AS employer_name FROM ' + from + ' WHERE ' + where + ' ORDER BY l.first_observed_at DESC NULLS LAST, l.source_updated_at DESC NULLS LAST LIMIT $' + (values.length + 1) + ' OFFSET $' + (values.length + 2), [...values, evidenceLimit, evidenceOffset]);
+  return { dimension: query.dimension, value: query.value, companies: companies.rows, evidence: evidence.rows, total: total.rows[0].count, limit, offset, evidencePagination: { limit: evidenceLimit, offset: evidenceOffset } };
 });
 
 app.get('/api/market/employers', async (request) => {
