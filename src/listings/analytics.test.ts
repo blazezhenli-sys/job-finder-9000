@@ -29,4 +29,13 @@ describe('market dashboard calculations', () => {
     expect(ranking).toMatchObject({ active_delta: 4, share_delta: 1, prior_active_listings: 0 });
     expect(Number.isNaN(ranking.active_delta)).toBe(false);
   });
+
+  it('includes every value from the latest period instead of using the last frequency row', () => {
+    const rankings = marketDashboardRankings([
+      { snapshot_date: '2026-11-30', dimension_value: 'software_engineering', active_listings: 120, active_share: 0.8 },
+      { snapshot_date: '2026-11-30', dimension_value: 'product', active_listings: 30, active_share: 0.2 },
+      { snapshot_date: '2026-11-29', dimension_value: 'software_engineering', active_listings: 100, active_share: 1 }
+    ], []);
+    expect(rankings.map((row) => row.dimension_value)).toEqual(['software_engineering', 'product']);
+  });
 });

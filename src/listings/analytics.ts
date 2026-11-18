@@ -173,7 +173,7 @@ function periodDays(from: string, to: string): number {
 }
 
 function latestMetric(metrics: any[]) {
-  return metrics.length ? metrics[metrics.length - 1] : undefined;
+  return metrics.reduce((latest, row) => !latest || String(row.snapshot_date) > String(latest.snapshot_date) ? row : latest, undefined);
 }
 
 export function marketDashboardPeriods(from: string, to: string) {
@@ -182,10 +182,10 @@ export function marketDashboardPeriods(from: string, to: string) {
 }
 
 export function marketDashboardRankings(currentMetrics: any[], previousMetrics: any[]) {
-  const currentLatest = latestMetric(currentMetrics);
-  const previousLatest = latestMetric(previousMetrics);
-  const previousByValue = new Map(previousLatest ? previousMetrics.filter((row: any) => row.snapshot_date === previousLatest.snapshot_date).map((row: any) => [row.dimension_value, row]) : []);
-  return (currentLatest ? currentMetrics.filter((row: any) => row.snapshot_date === currentLatest.snapshot_date) : [])
+  const currentDate = currentMetrics.reduce((latest: string | undefined, row: any) => !latest || String(row.snapshot_date) > latest ? String(row.snapshot_date) : latest, undefined);
+  const previousDate = previousMetrics.reduce((latest: string | undefined, row: any) => !latest || String(row.snapshot_date) > latest ? String(row.snapshot_date) : latest, undefined);
+  const previousByValue = new Map(previousDate ? previousMetrics.filter((row: any) => String(row.snapshot_date) === previousDate).map((row: any) => [row.dimension_value, row]) : []);
+  return (currentDate ? currentMetrics.filter((row: any) => String(row.snapshot_date) === currentDate) : [])
     .map((row: any) => {
       const prior = previousByValue.get(row.dimension_value);
       return {
