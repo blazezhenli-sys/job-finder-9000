@@ -44,7 +44,10 @@ export function normalizeCompanyDomain(value: string): string {
   try { url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`); }
   catch { return ''; }
   const host = url.hostname.toLowerCase().replace(/^www\./, '');
-  if (!host || host.includes('..') || atsDomains.has(host) || blockedDomains.has(host) || [...blockedDomains].some((domain) => host.endsWith(`.${domain}`))) return '';
+  // A relative link such as `about-us` must not become a company domain.
+  // Requiring a dotted hostname also filters localhost-like values and other
+  // path fragments that URL() accepts as hosts when given a synthetic scheme.
+  if (!host || !host.includes('.') || host.includes('..') || atsDomains.has(host) || blockedDomains.has(host) || [...blockedDomains].some((domain) => host.endsWith(`.${domain}`))) return '';
   return host;
 }
 
@@ -209,24 +212,40 @@ function assignedJsonObject(html: string, assignment: string): Record<string, un
 
 function nameFromTitle(title: string, provider: AtsProvider): string {
   const cleaned = text(title).replace(/\s+/g, ' ');
-  const explicit = cleaned.match(/^(?:careers?|jobs?|job openings?)\s+(?:at|with|for)\s+(.+)$/i)?.[1]
+  const explicit = cleaned.match(/^(?:careers?|jobs?|job openings?)\s+(?:at|with|for)\s+([^|–—-]+)/i)?.[1]
     ?? cleaned.match(/^(.+?)\s+(?:careers?|jobs?|job openings?)$/i)?.[1];
-  const candidates = [explicit ?? '', ...cleaned.split(/\s*[|–—]\s*/g)];
+  const candidates = [explicit ?? '', ...cleaned.split(/\s*[|–—-]\s*/g)];
   const providerName = provider === 'greenhouse' ? 'greenhouse' : provider;
-  return candidates.map((candidate) => candidate.replace(new RegExp(`\\b${providerName}\\b`, 'ig'), '').trim()).find((candidate) => candidate && !genericNames.test(candidate) && candidate.length > 2) ?? '';
+  return candidates.map((candidate) => candidate.replace(new RegExp(`\\b${providerName}\\b`, 'ig'), '').replace(/[|]+$/, '').trim()).find((candidate) => candidate && !genericNames.test(candidate) && candidate.length > 2) ?? '';
 }
 
 function anchorWebsite(html: string): string {
   const anchors = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let best: { domain: string; score: number } | undefined;
   for (const match of html.matchAll(anchors)) {
-    const domain = normalizeCompanyDomain(decodeHtml(match[1]));
+    const href = decodeHtml(match[1]).trim();
+    // Only absolute links are evidence of a public company website. Relative
+    // paths are common in career sites and are not domains.
+    if (!/^https?:\/\//i.test(href)) continue;
+    const domain = normalizeCompanyDomain(href);
     if (!domain) continue;
     const label = text(match[2].replace(/<[^>]+>/g, ''));
-    const score = /company|website|homepage|visit|about|learn more/i.test(label) ? 10 : 1;
+    const context = `${label} ${match[0]}`;
+    const score = /company|website|homepage|visit|about|learn more|logo|home/i.test(context) ? 10 : 0;
+    if (!score) continue;
     if (!best || score > best.score) best = { domain, score };
   }
   return best?.domain ?? '';
+}
+
+function companyNameFromDomain(domain: string): string {
+  const label = domain.split('.')[0] ?? '';
+  return label.replace(/[-_]+/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase()).trim();
+}
+
+function genericPageName(value: string): boolean {
+  const normalized = normalizeCompanyName(value);
+  return !normalized || /^(explore|open|join|careers|jobs|jobopenings|careersat|joinourteam|workwithus)/.test(normalized);
 }
 
 export function identityFromAtsHtml(html: string, provider: AtsProvider): CompanyIdentity {
@@ -265,7 +284,22 @@ export async function resolveAtsBoardIdentity(provider: Extract<AtsProvider, 'gr
   if (fromListings.name && fromListings.domain) return fromListings;
   try {
     const response = await fetch(publicBoardUrl(provider, identifier), { headers: { Accept: 'text/html', 'User-Agent': 'hiring-signal-discovery-identity/0.1' }, signal: AbortSignal.timeout(15_000) });
-    if (response.ok) return mergeCompanyIdentities(fromListings, identityFromAtsHtml(await response.text(), provider));
+    const finalDomain = normalizeCompanyDomain(response.url);
+    const pageIdentity = response.ok ? identityFromAtsHtml(await response.text(), provider) : { confidence: 'unknown' as const, sources: [], evidence: {} };
+    const merged = mergeCompanyIdentities(fromListings, pageIdentity);
+    if (finalDomain) {
+      const redirectName = companyNameFromDomain(finalDomain);
+      const name = merged.name && !genericPageName(merged.name) ? merged.name : redirectName;
+      return {
+        ...(name ? { name } : {}),
+        domain: finalDomain,
+        website: websiteForDomain(finalDomain),
+        confidence: name ? 'high' : 'medium',
+        sources: [...new Set([...merged.sources, 'ats_redirect'])],
+        evidence: { ...merged.evidence, redirect: { url: response.url, domain: finalDomain, name: redirectName } }
+      };
+    }
+    if (response.ok) return merged;
   } catch { /* Identity discovery should never make a listing poll fail. */ }
   return fromListings;
 }

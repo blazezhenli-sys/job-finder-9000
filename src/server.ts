@@ -325,9 +325,9 @@ const requirementSpecialties: Record<string, true> = {
 
 app.get('/api/companies/:id', async (request, reply) => {
   const id = (request.params as { id: string }).id;
-  const company = await pool.query(`SELECT id, name, website, identity_domain, identity_name_source, identity_domain_source, identity_confidence, verified_domain, description, industry, headquarters, company_size, prospect_status, prospect_notes, follow_up_at, contacted_at, first_discovered_at, updated_at FROM employers WHERE id=$1`, [id]);
+  const company = await pool.query(`SELECT id, name, website, career_url, identity_domain, identity_name_source, identity_domain_source, identity_confidence, verified_domain, description, industry, headquarters, company_size, prospect_status, prospect_notes, follow_up_at, contacted_at, first_discovered_at, updated_at FROM employers WHERE id=$1`, [id]);
   if (!company.rows[0]) return reply.code(404).send({ error: 'Company not found' });
-  const [boards, summary, specialties, listings, activity, dailyActivity, storedSignals, events] = await Promise.all([
+  const [boards, summary, specialties, listings, activity, dailyActivity, storedSignals, events, socialLinks] = await Promise.all([
     pool.query(`SELECT b.*, count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1 GROUP BY b.id ORDER BY b.status, b.provider, b.board_identifier`, [id]),
     pool.query(`SELECT count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
       count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering_count,
@@ -343,13 +343,14 @@ app.get('/api/companies/:id', async (request, reply) => {
     ,pool.query(`SELECT snapshot_date AS day, active_listings AS listings_seen, active_engineering, new_listings AS new_engineering, new_listings, removed_listings AS missing_listings, specialty_counts, technology_counts, employment_type_counts, work_mode_counts FROM company_daily_metrics WHERE employer_id=$1 ORDER BY snapshot_date ASC LIMIT 180`, [id]),
     pool.query(`SELECT signal_type AS type, signal_type AS label, explanation, data_quality FROM market_signals WHERE employer_id=$1 AND status='active' ORDER BY last_seen_at DESC LIMIT 25`, [id])
     ,pool.query(`SELECT ev.listing_id, ev.event_type, ev.observed_at, ev.source_updated_at, l.title, l.application_url, l.original_url FROM listing_events ev JOIN job_listings l ON l.id=ev.listing_id JOIN job_boards b ON b.id=ev.board_id WHERE b.employer_id=$1 ORDER BY ev.observed_at DESC LIMIT 100`, [id])
+    ,pool.query(`SELECT platform, profile_url, source_url, first_seen_at, last_seen_at FROM company_social_links WHERE employer_id=$1 AND is_active ORDER BY platform, profile_url`, [id])
   ]);
   const summaryRow = summary.rows[0] ?? {};
   const prospect = calculateProspectScore({ activeListings: Number(summaryRow.active_listing_count), newListings7d: Number(summaryRow.new_listing_count_7d), hasRecentActivity: Boolean(summaryRow.last_successful_monitoring && new Date(summaryRow.last_successful_monitoring).getTime() >= Date.now() - 30 * 86_400_000) });
   const signals: Array<{ type: string; label: string; explanation: string }> = [];
   const recentNewListings = (dailyActivity.rows.length ? dailyActivity.rows : activity.rows).filter((row) => new Date(row.day).getTime() >= Date.now() - 30 * 86_400_000).reduce((total, row) => total + Number(row.new_listings), 0);
   if (recentNewListings >= 3) signals.push({ type: 'hiring_expansion', label: 'Hiring expansion', explanation: `${recentNewListings} openings were observed after board baselines in the last 30 days.` });
-  return { company: { ...company.rows[0], prospect_score: prospect.score, prospect_score_factors: prospect.factors }, boards: boards.rows, summary: summaryRow, specialties: specialties.rows.map((row) => ({ ...row, label: engineeringSpecialtyLabels[row.specialty] || row.specialty })), listings: listings.rows, activity: activity.rows, dailyActivity: dailyActivity.rows, signals: [...signals, ...storedSignals.rows], events: events.rows };
+  return { company: { ...company.rows[0], prospect_score: prospect.score, prospect_score_factors: prospect.factors }, boards: boards.rows, summary: summaryRow, specialties: specialties.rows.map((row) => ({ ...row, label: engineeringSpecialtyLabels[row.specialty] || row.specialty })), listings: listings.rows, activity: activity.rows, dailyActivity: dailyActivity.rows, signals: [...signals, ...storedSignals.rows], events: events.rows, socialLinks: socialLinks.rows };
 });
 
 app.patch('/api/companies/:id', async (request, reply) => {
@@ -416,6 +417,27 @@ app.get('/api/listing-poll-tasks', async (request) => {
       LIMIT $1`, [activeLimit]),
     pool.query(`${select}
       FROM listing_poll_tasks t JOIN job_boards b ON b.id=t.board_id JOIN employers e ON e.id=b.employer_id
+      WHERE t.status IN ('completed', 'failed')
+      ORDER BY t.completed_at DESC NULLS LAST
+      LIMIT $1`, [historyLimit])
+  ]);
+  return { active: active.rows, history: history.rows, tasks: [...active.rows, ...history.rows] };
+});
+
+app.get('/api/company-enrichment-tasks', async (request) => {
+  const query = request.query as { limit?: string; historyLimit?: string };
+  const activeLimit = Math.min(500, Math.max(1, Number(query.limit) || 200));
+  const historyLimit = Math.min(200, Math.max(1, Number(query.historyLimit) || 100));
+  const select = `SELECT t.*, e.name AS employer_name, e.website AS company_website,
+      ROUND(EXTRACT(EPOCH FROM (COALESCE(t.completed_at, now()) - t.started_at)) * 1000)::int AS duration_ms`;
+  const [active, history] = await Promise.all([
+    pool.query(`${select}, ROW_NUMBER() OVER (ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.queued_at)::int AS queue_position
+      FROM company_enrichment_tasks t JOIN employers e ON e.id=t.employer_id
+      WHERE t.status IN ('queued', 'running')
+      ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.queued_at
+      LIMIT $1`, [activeLimit]),
+    pool.query(`${select}
+      FROM company_enrichment_tasks t JOIN employers e ON e.id=t.employer_id
       WHERE t.status IN ('completed', 'failed')
       ORDER BY t.completed_at DESC NULLS LAST
       LIMIT $1`, [historyLimit])
@@ -603,9 +625,10 @@ app.get('/api/events', async (request, reply) => {
   const listings = (data: unknown) => send('listings', data);
   const discovery = (data: unknown) => send('listing-discovery', data);
   const listingTask = (data: unknown) => send('listing-task', data);
-  events.on('opportunity', opportunity); events.on('health', health); events.on('listings', listings); events.on('listing-health', health); events.on('listing-discovery', discovery); events.on('listing-task', listingTask);
+  const companyEnrichmentTask = (data: unknown) => send('company-enrichment-task', data);
+  events.on('opportunity', opportunity); events.on('health', health); events.on('listings', listings); events.on('listing-health', health); events.on('listing-discovery', discovery); events.on('listing-task', listingTask); events.on('company-enrichment-task', companyEnrichmentTask);
   const heartbeat = setInterval(() => response.write(': heartbeat\n\n'), 15_000);
-  request.raw.on('close', () => { clearInterval(heartbeat); events.off('opportunity', opportunity); events.off('health', health); events.off('listings', listings); events.off('listing-health', health); events.off('listing-discovery', discovery); events.off('listing-task', listingTask); });
+  request.raw.on('close', () => { clearInterval(heartbeat); events.off('opportunity', opportunity); events.off('health', health); events.off('listings', listings); events.off('listing-health', health); events.off('listing-discovery', discovery); events.off('listing-task', listingTask); events.off('company-enrichment-task', companyEnrichmentTask); });
 });
 
 app.post('/api/dev/sample', async (_request, reply) => {

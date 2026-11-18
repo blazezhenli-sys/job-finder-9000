@@ -156,7 +156,7 @@ const appNavigation = { handlingRoute: false, preserveListingReset: false, prese
 const nativeReplaceState = history.replaceState.bind(history);
 const navigationUrl = (hash = location.hash) => `${location.pathname}${location.search}${hash || ''}`;
 history.replaceState = (stateValue, title, url) => nativeReplaceState(stateValue, title, typeof url === 'string' && location.hash && !url.includes('#') ? `${url}${location.hash}` : url);
-const validNavigationViews = new Set(['listings', 'market', 'companies', 'polling', 'monitoring', 'rules', 'authors', 'company-profile']);
+const validNavigationViews = new Set(['listings', 'market', 'companies', 'polling', 'enrichment', 'monitoring', 'rules', 'authors', 'company-profile']);
 function navigationRoute() {
   const parts = decodeURIComponent(location.hash.replace(/^#/, '')).split('/').filter(Boolean);
   const listingIndex = parts.indexOf('listing');
@@ -255,6 +255,13 @@ window.addEventListener('load', () => applyNavigationRoute(true).catch(console.e
 const renderCompanyProfileWithBoardLinks = renderCompanyProfile;
 renderCompanyProfile = function(data) {
   renderCompanyProfileWithBoardLinks(data);
+  const company = data.company || {};
+  if (company.website || company.career_url) $('#company-profile-subtitle').innerHTML = [company.website ? `<a class="source-link" href="${esc(company.website)}" target="_blank" rel="noreferrer">${esc(company.website)} ↗</a>` : '', company.career_url ? `<a class="source-link" href="${esc(company.career_url)}" target="_blank" rel="noreferrer">Careers ↗</a>` : ''].filter(Boolean).join(' · ');
+  const socialLinks = data.socialLinks || [];
+  const profileGrid = document.querySelector('#company-profile .company-profile-grid');
+  if (profileGrid && !profileGrid.querySelector('.company-social-panel')) {
+    profileGrid.insertAdjacentHTML('beforeend', `<div class="company-panel company-social-panel"><h2>Social profiles</h2>${socialLinks.length ? socialLinks.map((link) => `<div class="health-row"><span>${esc(link.platform)}</span><a class="source-link" href="${esc(link.profile_url)}" target="_blank" rel="noreferrer">Open profile ↗</a></div>`).join('') : '<p class="subtle">No explicit social profiles found yet.</p>'}</div>`);
+  }
   const boardPanel = [...document.querySelectorAll('#company-profile .company-panel')].find((panel) => panel.querySelector('h2')?.textContent.trim() === 'ATS boards');
   if (!boardPanel) return;
   const rows = boardPanel.querySelectorAll('.health-row');
@@ -267,3 +274,18 @@ renderCompanyProfile = function(data) {
     value.innerHTML = `${url ? `<a class="source-link" href="${esc(url)}" target="_blank" rel="noreferrer">${esc(label)} ↗</a>` : esc(label)}<small class="subtle">${board.status === 'active' ? ' · active' : ' · disabled'}</small>`;
   });
 };
+
+async function loadCompanyEnrichmentTasks() {
+  const data = await api('/api/company-enrichment-tasks?limit=500&historyLimit=100');
+  const active = data.active || [];
+  const completed = data.history || [];
+  const running = active.filter((task) => task.status === 'running').length;
+  const queued = active.length - running;
+  const taskRow = (task) => `<div class="task-row"><div><strong>${esc(task.employer_name)}</strong><div class="subtle">${esc(task.company_website || 'No website recorded')}</div><div class="health-detail">${task.status === 'queued' ? `Queue position ${task.queue_position} · queued ${date(task.queued_at)}` : task.status === 'running' ? `Current task · started ${date(task.started_at)}` : `${task.links_found || 0} social links · ${task.career_url ? 'career page found · ' : ''}${task.duration_ms ? `${Math.round(task.duration_ms / 1000)}s` : '—'} · ${date(task.completed_at)}`}${task.error ? ` · <span class="error-text">${esc(task.error)}</span>` : ''}</div></div><span class="pill task-${esc(task.status)}">${esc(task.status)}</span></div>`;
+  $('#enrichment-tasks').innerHTML = `<div class="task-panel-grid"><div class="task-card"><div class="task-heading"><div><h2>Enrichment queue</h2><p class="subtle">${running} running · ${queued} queued · bounded concurrency</p></div><button id="refresh-enrichment-tasks" class="button secondary" type="button">Refresh</button></div>${active.length ? active.map(taskRow).join('') : '<p class="subtle">No enrichment tasks are currently queued.</p>'}</div><div class="task-card"><h2>Completed task history</h2><p class="subtle">Latest ${completed.length} completed or failed tasks</p>${completed.length ? completed.map(taskRow).join('') : '<p class="subtle">No completed enrichment tasks yet.</p>'}</div></div>`;
+  $('#refresh-enrichment-tasks')?.addEventListener('click', () => loadCompanyEnrichmentTasks().catch(console.error));
+}
+
+document.querySelectorAll('.tab[data-view="enrichment"]').forEach((tab) => tab.addEventListener('click', () => loadCompanyEnrichmentTasks().catch(console.error)));
+$('#refresh-enrichment-tasks-page')?.addEventListener('click', () => loadCompanyEnrichmentTasks().catch(console.error));
+setInterval(() => { if ($('#view-enrichment')?.classList.contains('active')) loadCompanyEnrichmentTasks().catch(console.error); }, 5000);

@@ -7,7 +7,7 @@ import { getPreferences, pool, withTransaction } from '../db.js';
 import { config } from '../config.js';
 import type { JobBoard, NormalizedJobListing } from '../types.js';
 import { events } from '../pipeline-service.js';
-import { resolveAtsBoardIdentity } from './identity.js';
+import { normalizeCompanyDomain, resolveAtsBoardIdentity } from './identity.js';
 import { resolveExistingBoardEmployer } from './employer-resolution.js';
 
 let polling = false;
@@ -42,7 +42,8 @@ async function boardRows(): Promise<JobBoard[]> {
 }
 
 function identityNeedsRefresh(board: JobBoard): boolean {
-  if (board.provider === 'remotive' || board.provider === 'adzuna' || board.identityDomain) return false;
+  if (board.provider === 'remotive' || board.provider === 'adzuna') return false;
+  if (board.identityDomain && normalizeCompanyDomain(board.identityDomain)) return false;
   if (!board.identityLastObservedAt) return true;
   return new Date(board.identityLastObservedAt).getTime() < Date.now() - 7 * 86_400_000;
 }

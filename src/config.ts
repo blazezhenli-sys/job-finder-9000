@@ -47,6 +47,8 @@ export const config = {
   enableListings: bool(process.env.ENABLE_LISTINGS, true),
   listingsPollIntervalMs: num(process.env.LISTINGS_POLL_INTERVAL_MS, 3_600_000),
   listingsPollConcurrency: Math.max(1, Math.floor(num(process.env.LISTINGS_POLL_CONCURRENCY, 4))),
+  companyEnrichmentIntervalMs: num(process.env.COMPANY_ENRICHMENT_INTERVAL_MS, 3_600_000),
+  companyEnrichmentConcurrency: Math.max(1, Math.floor(num(process.env.COMPANY_ENRICHMENT_CONCURRENCY, 2))),
   enableListingDiscovery: bool(process.env.ENABLE_LISTING_DISCOVERY, true),
   listingDiscoveryIntervalMs: num(process.env.LISTING_DISCOVERY_INTERVAL_MS, 86_400_000),
   listingDiscoveryValidationConcurrency: Math.max(1, Math.floor(num(process.env.LISTING_DISCOVERY_VALIDATION_CONCURRENCY, 4))),

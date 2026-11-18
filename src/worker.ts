@@ -13,6 +13,7 @@ import { backfillListingLocationSignals, backfillListingMetadata } from './listi
 import { backfillListingCompensation } from './listings/salary.js';
 import { backfillListingClassification, loadTechnologyTaxonomy } from './listings/classification.js';
 import { detectMarketSignals, runDailyMarketSnapshot } from './listings/analytics.js';
+import { startCompanyEnrichment } from './listings/enrichment-worker.js';
 
 let started = false;
 const sources: SourceAdapter[] = [];
@@ -20,6 +21,7 @@ let listingTimer: NodeJS.Timeout | undefined;
 let discoveryTimer: NodeJS.Timeout | undefined;
 let analyticsTimer: NodeJS.Timeout | undefined;
 let classificationTimer: NodeJS.Timeout | undefined;
+let companyEnrichmentTimer: NodeJS.Timeout | undefined;
 let classificationReady: Promise<void> | undefined;
 let locationSignalsReady: Promise<void> | undefined;
 
@@ -43,6 +45,7 @@ export async function startWorkers() {
   setInterval(() => void deliverNotifications(), 15_000);
   setInterval(() => void removeExpired(), 60 * 60 * 1000);
   if (config.enableListings) listingTimer = startListingPolling(config.listingsPollIntervalMs);
+  if (config.enableListings) companyEnrichmentTimer = startCompanyEnrichment(config.companyEnrichmentIntervalMs);
   if (config.enableListings && config.enableListingDiscovery) discoveryTimer = await startListingDiscovery(config.listingDiscoveryIntervalMs);
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));
@@ -59,4 +62,4 @@ export async function startWorkers() {
   void deliverNotifications();
 }
 
-export function stopWorkers() { for (const source of sources) source.stop(); if (listingTimer) clearInterval(listingTimer); if (discoveryTimer) clearInterval(discoveryTimer); if (analyticsTimer) clearInterval(analyticsTimer); if (classificationTimer) clearInterval(classificationTimer); }
+export function stopWorkers() { for (const source of sources) source.stop(); if (listingTimer) clearInterval(listingTimer); if (companyEnrichmentTimer) clearInterval(companyEnrichmentTimer); if (discoveryTimer) clearInterval(discoveryTimer); if (analyticsTimer) clearInterval(analyticsTimer); if (classificationTimer) clearInterval(classificationTimer); }

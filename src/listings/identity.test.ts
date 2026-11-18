@@ -29,4 +29,15 @@ describe('company identity resolution', () => {
     }]);
     expect(identity).toMatchObject({ name: 'Example Co', domain: 'example.com' });
   });
+
+  it('does not treat relative career links as company domains', () => {
+    const identity = identityFromAtsHtml('<a href="/about-us">About us</a><a href="/open-roles">Open roles</a>', 'greenhouse');
+    expect(normalizeCompanyDomain('about-us')).toBe('');
+    expect(identity.domain).toBeUndefined();
+  });
+
+  it('keeps the company portion of a descriptive careers title', () => {
+    const identity = identityFromAtsHtml('<title>Careers at Securly | Remote-First K-12 EdTech Jobs</title>', 'greenhouse');
+    expect(identity.name).toBe('Securly');
+  });
 });
