@@ -90,7 +90,7 @@ export async function runDailyMarketSnapshot(snapshotDate = isoDate(new Date()))
           UNION ALL SELECT 'specialty', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(engineering_specialties,'[]'::jsonb)) AS facet(value)
           UNION ALL SELECT 'technology', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(technologies,'[]'::jsonb)) AS facet(value)
           UNION ALL SELECT 'region', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(location_signals->'regions','[]'::jsonb)) AS facet(value)
-          UNION ALL SELECT 'country', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(NULLIF(location_signals->'countries','[]'::jsonb), location_signals->'locations','[]'::jsonb)) AS facet(value)
+          UNION ALL SELECT 'country', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(location_signals->'countries', location_signals->'locations', '[]'::jsonb)) AS facet(value)
         )
         INSERT INTO market_daily_metrics (snapshot_date, cohort, dimension, dimension_value, active_listings, employers, new_listings, removed_listings, remote_listings, contract_listings)
         SELECT $1, $2, dimension, dimension_value, count(*)::int, count(DISTINCT employer_id)::int, count(*) FILTER (WHERE is_new)::int, 0, count(*) FILTER (WHERE is_remote)::int, count(*) FILTER (WHERE is_contract)::int
@@ -118,7 +118,7 @@ export async function runDailyMarketSnapshot(snapshotDate = isoDate(new Date()))
           UNION ALL SELECT 'specialty', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'specialties','[]'::jsonb)) AS facet(value)
           UNION ALL SELECT 'technology', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'technologies','[]'::jsonb)) AS facet(value)
           UNION ALL SELECT 'region', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'locationSignals'->'regions','[]'::jsonb)) AS facet(value)
-          UNION ALL SELECT 'country', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(NULLIF(current_value->'locationSignals'->'countries','[]'::jsonb), current_value->'locationSignals'->'locations','[]'::jsonb)) AS facet(value)
+          UNION ALL SELECT 'country', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'locationSignals'->'countries', current_value->'locationSignals'->'locations', '[]'::jsonb)) AS facet(value)
         ), counts AS (
           SELECT dimension, dimension_value, count(*)::int AS removed_listings FROM removed_dimensions GROUP BY dimension, dimension_value
         )

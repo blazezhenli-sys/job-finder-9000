@@ -21,6 +21,16 @@ const deferredMigrationFiles = new Set([
   '028_market_index_listing_events.sql',
   '029_market_index_full_text.sql'
 ]);
+const deferredIndexNames: Record<string, string> = {
+  '022_market_index_engineering_specialties.sql': 'job_listings_engineering_specialties_gin_idx',
+  '023_market_index_technologies.sql': 'job_listings_technologies_gin_idx',
+  '024_market_index_location_signals.sql': 'job_listings_location_signals_gin_idx',
+  '025_market_index_observation_time.sql': 'job_listings_observation_time_idx',
+  '026_market_index_publication_time.sql': 'job_listings_publication_time_idx',
+  '027_market_index_board_observations.sql': 'listing_board_observations_board_day_idx',
+  '028_market_index_listing_events.sql': 'listing_events_observed_day_idx',
+  '029_market_index_full_text.sql': 'job_listings_market_search_idx'
+};
 
 async function runMigrationFiles(files: string[], seed: boolean) {
   const client = await pool.connect();
@@ -30,6 +40,25 @@ async function runMigrationFiles(files: string[], seed: boolean) {
     locked = true;
     for (const file of files) await client.query(await readFile(join(process.cwd(), 'migrations', file), 'utf8'));
     if (seed) await seedDefaults(client);
+  } finally {
+    if (locked) await client.query('SELECT pg_advisory_unlock($1, $2)', migrationLock);
+    client.release();
+  }
+}
+
+async function runDeferredIndexMigrations(files: string[]) {
+  const client = await pool.connect();
+  let locked = false;
+  try {
+    await client.query('SELECT pg_advisory_lock($1, $2)', migrationLock);
+    locked = true;
+    for (const file of files) {
+      const indexName = deferredIndexNames[file];
+      const existing = await client.query('SELECT i.indisvalid FROM pg_class c JOIN pg_index i ON i.indexrelid=c.oid WHERE c.relname=$1', [indexName]);
+      if (existing.rows[0]?.indisvalid) continue;
+      if (existing.rows[0]) await client.query('DROP INDEX CONCURRENTLY IF EXISTS "' + indexName + '"');
+      await client.query(await readFile(join(process.cwd(), 'migrations', file), 'utf8'));
+    }
   } finally {
     if (locked) await client.query('SELECT pg_advisory_unlock($1, $2)', migrationLock);
     client.release();
@@ -53,7 +82,7 @@ export function startDeferredMigrations() {
   if (!deferredMigrationPromise) {
     deferredMigrationPromise = readdir(join(process.cwd(), 'migrations'))
       .then((files) => files.filter((file) => deferredMigrationFiles.has(file)).sort())
-      .then((files) => runMigrationFiles(files, false))
+      .then((files) => runDeferredIndexMigrations(files))
       .catch((error) => {
         deferredMigrationPromise = undefined;
         throw error;
