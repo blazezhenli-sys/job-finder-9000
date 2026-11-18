@@ -227,7 +227,7 @@ app.get('/api/companies', async (request) => {
 
 const requirementSpecialties: Record<string, true> = {
   backend_api: true, frontend: true, full_stack: true, infrastructure_devops: true, data_engineering: true,
-  machine_learning_ai: true, mobile: true, security: true, other_software: true
+  machine_learning_ai: true, mobile: true, security: true, qa_testing: true, embedded_systems: true, platform_infrastructure: true, other_software: true
 };
 
 app.get('/api/companies/:id', async (request, reply) => {

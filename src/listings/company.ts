@@ -10,6 +10,9 @@ export const engineeringSpecialtyLabels: Record<string, string> = {
   machine_learning_ai: 'Machine learning / AI',
   mobile: 'Mobile',
   security: 'Security',
+  qa_testing: 'QA / testing',
+  embedded_systems: 'Embedded / systems',
+  platform_infrastructure: 'Platform / infrastructure',
   other_software: 'Other software engineering'
 };
 
