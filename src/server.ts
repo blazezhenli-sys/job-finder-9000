@@ -573,7 +573,7 @@ app.get('/api/settings', async () => {
 app.put('/api/settings', async (request, reply) => {
   const body = request.body as Record<string, unknown>;
   const current = await getPreferences();
-  const allowed = ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumNotificationLocationFitScore', 'notificationsEnabled', 'notifyRecovered', 'listingsNotificationsEnabled', 'minimumListingRelevance', 'minimumListingLocationFitScore', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'locationProfile'];
+  const allowed = ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumNotificationLocationFitScore', 'notificationsEnabled', 'notifyRecovered', 'listingsNotificationsEnabled', 'minimumListingRelevance', 'minimumListingLocationFitScore', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'heuristics', 'locationProfile'];
   const changes: Record<string, unknown> = {};
   for (const key of allowed) if (body[key] !== undefined) changes[key] = body[key];
   for (const key of ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumNotificationLocationFitScore']) if (changes[key] !== undefined && (!Number.isFinite(Number(changes[key])) || Number(changes[key]) < 0 || Number(changes[key]) > 100)) return reply.code(400).send({ error: `${key} must be 0-100` });

@@ -74,7 +74,7 @@
       <div class="market-panel"><h2>Market signals</h2><div id="market-dashboard-signals"><p class="subtle">No sufficiently supported signals yet.</p></div></div>
       <details class="market-panel market-analysis-tools"><summary>Analysis tools</summary><div class="segment-grid"><label>Segment A<select id="market-compare-a"><option value="">Choose category</option></select></label><label>Segment B<select id="market-compare-b"><option value="">Choose category</option></select></label><label>Work mode<select id="market-compare-work-mode"><option value="">Any work mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label><label>Employment<select id="market-compare-employment"><option value="">Any employment type</option><option value="full">Full-time</option><option value="contract">Contract</option><option value="freelance">Freelance</option></select></label></div><button id="market-compare-button" class="button secondary" type="button">Compare segments</button><div id="market-comparison" class="comparison-grid"><p class="subtle">Choose two categories to compare.</p></div><div class="market-taxonomy-tools"><h3>Technology taxonomy</h3><form id="market-taxonomy-form" class="filters"><input name="canonical" placeholder="Canonical technology" required><input name="alias" placeholder="Alias" required><button class="button secondary" type="submit">Add alias</button></form><div id="market-taxonomy" class="facet-list"></div></div></details>
     </div>
-    <aside id="market-evidence" class="market-evidence-panel hidden"><div class="company-panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2 id="market-evidence-title">Supporting data</h2><p id="market-evidence-note" class="subtle"></p></div><div class="heading-actions"><button id="market-evidence-open-listings" class="button primary hidden" type="button">Open matching listings</button><button id="market-evidence-close" class="button secondary" type="button">Close</button></div></div><div id="market-evidence-companies"></div><div id="market-evidence-listings"></div><div id="market-evidence-pagination" class="pagination"></div></aside>
+    <div id="market-evidence" class="market-evidence-modal hidden" role="dialog" aria-modal="true" aria-labelledby="market-evidence-title"><div class="market-evidence-backdrop" data-close-market-evidence></div><section class="market-evidence-dialog"><div class="company-panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2 id="market-evidence-title">Supporting data</h2><p id="market-evidence-note" class="subtle"></p></div><div class="heading-actions"><button id="market-evidence-open-listings" class="button primary hidden" type="button">Open matching listings</button><button id="market-evidence-close" class="button secondary" type="button">Close</button></div></div><div id="market-evidence-companies"></div><div id="market-evidence-listings"></div><div id="market-evidence-pagination" class="pagination"></div></section></div>
   `;
 
   function ensureDashboardFilterControls() {
@@ -259,6 +259,7 @@
     if (![...select.options].some((option) => option.value === value)) select.add(new Option(label(value), value));
     select.value = value;
     document.querySelector('#market-evidence')?.classList.add('hidden');
+    document.body.classList.remove('market-evidence-open');
     loadListings(true).catch(console.error);
   }
 
@@ -266,6 +267,7 @@
     const data = await api('/api/market/signals/' + encodeURIComponent(id));
     const panel = document.querySelector('#market-evidence');
     panel.classList.remove('hidden');
+    document.body.classList.add('market-evidence-open');
     document.querySelector('#market-evidence-title').textContent = 'Signal evidence';
     document.querySelector('#market-evidence-open-listings').classList.add('hidden');
     document.querySelector('#market-evidence-note').textContent = data.signal?.explanation || 'Listings and companies supporting this signal.';
@@ -385,6 +387,7 @@
     if (!value) return;
     const panel = document.querySelector('#market-evidence');
     panel.classList.remove('hidden');
+    document.body.classList.add('market-evidence-open');
     document.querySelector('#market-evidence-title').textContent = label(value) + ' evidence';
     document.querySelector('#market-evidence-note').textContent = 'Current evidence matching the selected sector and period.';
     const openListingsButton = document.querySelector('#market-evidence-open-listings');
@@ -414,10 +417,18 @@
   params();
   setControls();
   document.querySelector('#market-dashboard-refresh').addEventListener('click', () => loadDashboard().catch(console.error));
-  ['window', 'cohort', 'granularity', 'dimension', 'mode'].forEach((name) => document.querySelector('#market-dashboard-' + name).addEventListener('change', (event) => { state[name === 'window' ? 'windowDays' : name] = name === 'window' ? Number(event.target.value) : event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
-  [['filter-category', 'filterCategory'], ['filter-specialty', 'filterSpecialty'], ['filter-technology', 'filterTechnology'], ['filter-region', 'filterRegion'], ['filter-country', 'filterCountry'], ['provider', 'filterProvider'], ['work-mode', 'filterWorkMode'], ['employment', 'filterEmploymentType']].forEach(([id, key]) => document.querySelector('#market-dashboard-' + id).addEventListener('change', (event) => { state[key] = event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
+  ['window', 'cohort', 'granularity', 'dimension', 'mode'].forEach((name) => document.querySelector('#market-dashboard-' + name).addEventListener('change', (event) => { closeEvidence(); state[name === 'window' ? 'windowDays' : name] = name === 'window' ? Number(event.target.value) : event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
+  [['filter-category', 'filterCategory'], ['filter-specialty', 'filterSpecialty'], ['filter-technology', 'filterTechnology'], ['filter-region', 'filterRegion'], ['filter-country', 'filterCountry'], ['provider', 'filterProvider'], ['work-mode', 'filterWorkMode'], ['employment', 'filterEmploymentType']].forEach(([id, key]) => document.querySelector('#market-dashboard-' + id).addEventListener('change', (event) => { closeEvidence(); state[key] = event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
   document.querySelector('#market-dashboard-advanced-toggle').addEventListener('click', () => document.querySelector('#market-dashboard-advanced').classList.toggle('hidden'));
-  document.querySelector('#market-evidence-close').addEventListener('click', () => { state.focus = ''; persist(); document.querySelector('#market-evidence').classList.add('hidden'); });
+  function closeEvidence() {
+    state.focus = '';
+    persist();
+    document.querySelector('#market-evidence').classList.add('hidden');
+    document.body.classList.remove('market-evidence-open');
+  }
+  document.querySelector('#market-evidence-close').addEventListener('click', closeEvidence);
+  document.querySelector('[data-close-market-evidence]').addEventListener('click', closeEvidence);
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !document.querySelector('#market-evidence').classList.contains('hidden')) closeEvidence(); });
   document.querySelector('#market-evidence-open-listings').addEventListener('click', () => openListingsForDimension(state.focus));
   document.querySelector('#market-compare-button').addEventListener('click', () => loadMarketComparison().catch(console.error));
   document.querySelector('#market-taxonomy-form').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); await api('/api/market/taxonomy/technologies', { method: 'PATCH', body: JSON.stringify(Object.fromEntries(form.entries())) }); event.currentTarget.reset(); await loadTaxonomy(); });

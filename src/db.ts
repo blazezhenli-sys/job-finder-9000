@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { readdir } from 'node:fs/promises';
 import pg from 'pg';
 import { config } from './config.js';
+import { defaultHeuristics } from './pipeline.js';
 import type { DetectionRule, Preferences } from './types.js';
 
 const { Pool } = pg;
@@ -140,7 +141,8 @@ export const defaultPreferences: Preferences = {
   contractTerms: ['contract', 'contractor', 'freelance', 'consulting', 'part-time'],
   contactTerms: ['dm me', 'direct message', 'email me', 'reach out', 'founder', 'hiring manager'],
   weights: { hiring: 20, role: 18, technology: 28, remote: 12, international: 8, contract: 10, contact: 8 },
-  locationProfile: { baseLocation: 'Taiwan', timeZone: 'Asia/Taipei', utcOffset: 8, preferredRegions: ['Taiwan', 'APAC', 'Asia', 'Worldwide'] }
+  heuristics: { ...defaultHeuristics },
+  locationProfile: { baseLocation: '', timeZone: 'UTC', utcOffset: 0, preferredRegions: [] }
 };
 
 async function seedDefaults(client: pg.PoolClient) {
@@ -165,7 +167,14 @@ async function seedDefaults(client: pg.PoolClient) {
 
 export async function getPreferences(): Promise<Preferences> {
   const result = await pool.query('SELECT value FROM app_settings WHERE key = $1', ['preferences']);
-  return { ...defaultPreferences, ...(result.rows[0]?.value ?? {}) };
+  const saved = result.rows[0]?.value ?? {};
+  return {
+    ...defaultPreferences,
+    ...saved,
+    weights: { ...defaultPreferences.weights, ...(saved.weights ?? {}) },
+    heuristics: { ...defaultPreferences.heuristics, ...(saved.heuristics ?? {}) },
+    locationProfile: { ...defaultPreferences.locationProfile, ...(saved.locationProfile ?? {}) }
+  };
 }
 
 export async function setPreferences(value: Partial<Preferences>) {

@@ -12,6 +12,7 @@ const rules: DetectionRule[] = [
   { id: '2', name: 'Contract', pattern: 'contractor', match_type: 'phrase', category: 'contract', weight: 10, negative: false, enabled: true },
   { id: '3', name: 'Closed', pattern: 'hiring is closed', match_type: 'phrase', category: 'negative', weight: 0, negative: true, enabled: true }
 ];
+const taiwanPreferences = { ...defaultPreferences, locationProfile: { baseLocation: 'Taiwan', timeZone: 'Asia/Taipei', utcOffset: 8, preferredRegions: ['Taiwan', 'APAC', 'Asia', 'Worldwide'] } };
 
 describe('hiring signal pipeline', () => {
   it('normalizes punctuation and whitespace', () => expect(normalizeText('  We\u2019re   hiring\nnow  ')).toBe("We're hiring now"));
@@ -23,6 +24,7 @@ describe('hiring signal pipeline', () => {
     expect(result.employmentTypes).toContain('contract/freelance');
     expect(result.score).toBeGreaterThan(55);
     expect(result.breakdown.map((item) => item.label)).toContain('Remote preference');
+    expect(result.signalQualityBreakdown.map((item) => item.label)).toContain('Detection rule evidence');
     expect(result.category).toBe('direct_hiring');
     expect(result.signalQuality).toBeGreaterThan(70);
     expect(result.contactMethods.some((method) => method.type === 'dm')).toBe(true);
@@ -45,6 +47,7 @@ describe('hiring signal pipeline', () => {
     expect(notificationEligible(analysis, true, { ...defaultPreferences, notifyRecovered: false })).toBe(false);
     expect(notificationEligible(analysis, true, { ...defaultPreferences, notifyRecovered: true })).toBe(true);
     expect(notificationEligible({ ...analysis, personalRelevance: 20, score: 20 }, false, { ...defaultPreferences, notifyRecovered: true })).toBe(false);
+    expect(notificationEligible({ ...analysis, personalRelevance: 90, score: 90 }, false, { ...defaultPreferences, minimumNotificationScore: 95 })).toBe(false);
   });
   it('suppresses templated job-board advertisements while retaining them for review', () => {
     const result = analyzePost({ ...post, text: '🚀 New Remote Job Alert! Position: Software Engineer Company: Example Corp Location: USA Apply now: https://jobs.example.com/1 #RemoteJobs #Hiring' }, rules, defaultPreferences);
@@ -64,20 +67,20 @@ describe('hiring signal pipeline', () => {
     expect(result.classificationReasons.join(' ')).toContain('NearSkill');
   });
   it('extracts explicit work mode, location constraints, and timezone evidence', () => {
-    const worldwide = analyzePost({ ...post, text: "We're hiring remotely worldwide; Taiwan and UTC+8 overlap are welcome." }, rules, defaultPreferences);
+    const worldwide = analyzePost({ ...post, text: "We're hiring remotely worldwide; Taiwan and UTC+8 overlap are welcome." }, rules, taiwanPreferences);
     expect(worldwide.locationSignals.workMode).toBe('remote');
     expect(worldwide.locationSignals.locations).toContain('Taiwan');
     expect(worldwide.locationSignals.constraint).toBe('allowed');
     expect(worldwide.locationSignals.timezoneRequirements).toContain('UTC+8');
     expect(worldwide.locationFit).toBe('excellent');
 
-    const restricted = analyzePost({ ...post, text: "We're hiring a backend engineer, remote in the United States only. No visa sponsorship." }, rules, defaultPreferences);
+    const restricted = analyzePost({ ...post, text: "We're hiring a backend engineer, remote in the United States only. No visa sponsorship." }, rules, taiwanPreferences);
     expect(restricted.locationSignals.workMode).toBe('remote');
     expect(restricted.locationSignals.locations).toContain('United States');
     expect(restricted.locationSignals.constraint).toBe('restricted');
     expect(restricted.locationFit).toBe('poor');
 
-    const apac = analyzePost({ ...post, text: "We're hiring a remote engineer. APAC hours preferred." }, rules, defaultPreferences);
+    const apac = analyzePost({ ...post, text: "We're hiring a remote engineer. APAC hours preferred." }, rules, taiwanPreferences);
     expect(apac.locationFit).toBe('excellent');
 
     const arbitraryCountry = analyzePost({ ...post, text: "We're hiring remote - Jordan. Applicants must already have work authorization." }, rules, defaultPreferences);
@@ -88,5 +91,12 @@ describe('hiring signal pipeline', () => {
   it('derives broad regions from normalized countries and exposes worldwide coverage', () => {
     expect(extractLocationSignals('Taipei, Taiwan').regions).toEqual(expect.arrayContaining(['Asia', 'APAC']));
     expect(extractLocationSignals('Remote worldwide').regions).toContain('Worldwide');
+  });
+  it('evaluates location fit against whichever profile is supplied', () => {
+    const berlinPreferences = { ...defaultPreferences, locationProfile: { baseLocation: 'Berlin', timeZone: 'Europe/Berlin', utcOffset: 1, preferredRegions: ['Europe'] } };
+    const berlin = analyzePost({ ...post, text: "We're hiring onsite in Berlin." }, rules, berlinPreferences);
+    expect(berlin.locationFit).toBe('excellent');
+    const taiwan = analyzePost({ ...post, text: "We're hiring onsite in Taiwan." }, rules, berlinPreferences);
+    expect(taiwan.locationFit).toBe('poor');
   });
 });

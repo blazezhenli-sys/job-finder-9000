@@ -1,4 +1,4 @@
-import type { Analysis, AuthorSignals, ContactMethod, DetectionRule, LocationFit, LocationSignals, NormalizedPost, Preferences, ScoreContribution, SignalCategory } from './types.js';
+import type { Analysis, AuthorSignals, ContactMethod, DetectionRule, HeuristicPreferences, LocationFit, LocationSignals, NormalizedPost, Preferences, ScoreContribution, SignalCategory } from './types.js';
 
 export function stableOpportunityKey(source: string, sourceId: string): string { return `${source}:${sourceId}`; }
 export function detectionLatencyMs(publishedAt: Date, firstSeenAt: Date): number { return Math.max(0, firstSeenAt.getTime() - publishedAt.getTime()); }
@@ -11,9 +11,52 @@ function containsTerm(text: string, term: string): boolean {
   const escaped = term.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
   return escaped.length > 0 && new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(text);
 }
-function matchingTerms(text: string, terms: string[]): string[] { return terms.filter((term) => containsTerm(text, term)); }
+export function matchingTerms(text: string, terms: string[]): string[] { return terms.filter((term) => containsTerm(text, term)); }
 function ruleMatches(text: string, rule: DetectionRule): boolean { try { return rule.match_type === 'regex' ? new RegExp(rule.pattern, 'iu').test(text) : containsTerm(text, rule.pattern); } catch { return false; } }
 function addContribution(list: ScoreContribution[], label: string, points: number, evidence: string[]) { if (points > 0) list.push({ label, points, evidence }); }
+
+function matchesAny(text: string, terms: string[]): boolean { return matchingTerms(text, terms).length > 0; }
+
+export const defaultHeuristics: HeuristicPreferences = {
+  activeDemandTerms: ['looking for', 'seeking', 'need', 'hiring', 'hire', 'anyone know', 'anyone available', 'want to hire'],
+  firstPersonTerms: ["i'm", 'i am', "we're", 'we are', 'my team', 'our team', 'founder', 'cto', 'hiring manager'],
+  directHiringTerms: ["we're hiring", 'we are hiring', "i'm hiring", 'i am hiring', 'looking for a', 'looking for an', 'looking for someone', 'founding engineer', 'know any good developers', 'know any good engineers', 'need a contractor', 'need a developer', 'need a freelancer', 'send me your portfolio'],
+  softwareRequestTerms: ['looking for someone to build', 'need help with', 'need help building', 'integrate stripe', 'integrate paypal', 'integrate an api', 'internal dashboard', 'migrate our infrastructure', 'migrating our infrastructure', 'reliable freelance programmer', 'reliable freelance developer', 'available for contract work', 'looking for a freelancer'],
+  softwareEvidenceTerms: ['backend', 'developer', 'engineer', 'software', 'dashboard', 'infrastructure', 'api', 'automation', 'stripe', 'node.js', 'typescript', 'python'],
+  referralTerms: ['my team is hiring', 'our team is hiring', "we're growing the engineering team", 'happy to chat', 'my company is hiring'],
+  automatedTemplateTerms: ['new remote job alert', 'position:', 'company:', 'location:', 'category:', 'apply now', '#jobopportunity', '#remotejobs', 'job board', 'jobs roundup'],
+  selfPromotionTerms: ['looking for clients', 'hire me', 'available for work', 'i am a freelance developer', "i'm a freelance developer", 'i am a contract developer', "i'm a contract developer", 'i am a software developer', "i'm a software developer", 'i am a web developer', "i'm a web developer", 'i am a backend developer', "i'm a backend developer", 'i am a frontend developer', "i'm a frontend developer", 'i am a programmer', "i'm a programmer"],
+  automatedTemplateThreshold: 2
+};
+
+function heuristicConfig(preferences?: Preferences): HeuristicPreferences {
+  return { ...defaultHeuristics, ...(preferences?.heuristics ?? {}) };
+}
+
+function configuredWeight(preferences: Preferences, key: string, fallback: number): number {
+  const value = Number(preferences.weights?.[key]);
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;
+}
+
+/** Score user-facing relevance dimensions with bounded, preference-driven contributions. */
+export function scorePreferenceEvidence(text: string, preferences: Preferences): { score: number; breakdown: ScoreContribution[]; technologies: string[]; employmentTypes: string[] } {
+  const technologies = matchingTerms(text, preferences.technologyTerms);
+  const roleTerms = matchingTerms(text, preferences.roleTerms);
+  const remoteTerms = matchingTerms(text, preferences.remoteTerms);
+  const internationalTerms = matchingTerms(text, preferences.internationalTerms);
+  const contractTerms = matchingTerms(text, preferences.contractTerms);
+  const contactTerms = matchingTerms(text, preferences.contactTerms);
+  const breakdown: ScoreContribution[] = [];
+  const boundedMatch = (count: number, saturation: number, maximum: number) => maximum * Math.min(1, count / saturation);
+  addContribution(breakdown, 'Relevant role', boundedMatch(roleTerms.length, 1, configuredWeight(preferences, 'role', 18)), roleTerms);
+  addContribution(breakdown, 'Technology match', boundedMatch(technologies.length, 3, configuredWeight(preferences, 'technology', 28)), technologies);
+  addContribution(breakdown, 'Remote preference', boundedMatch(remoteTerms.length, 1, configuredWeight(preferences, 'remote', 12)), remoteTerms);
+  addContribution(breakdown, 'International signal', boundedMatch(internationalTerms.length, 1, configuredWeight(preferences, 'international', 8)), internationalTerms);
+  addContribution(breakdown, 'Contract / freelance', boundedMatch(contractTerms.length, 1, configuredWeight(preferences, 'contract', 10)), contractTerms);
+  addContribution(breakdown, 'Direct contact signal', boundedMatch(contactTerms.length, 1, configuredWeight(preferences, 'contact', 8)), contactTerms);
+  const employmentTypes = [contractTerms.some((term) => /contract|freelance|consult|part-time/i.test(term)) ? 'contract/freelance' : '', /\bfull[- ]?time\b/i.test(text) ? 'full-time' : '', /\bpart[- ]?time\b/i.test(text) ? 'part-time' : ''].filter(Boolean);
+  return { score: Math.min(100, Math.round(breakdown.reduce((total, item) => total + item.points, 0))), breakdown, technologies, employmentTypes };
+}
 
 export function extractOutboundDomains(text: string): string[] {
   const domains = new Set<string>();
@@ -84,21 +127,22 @@ export function extractLocationSignals(text: string): LocationSignals {
 
 export function evaluateLocationFit(signals: LocationSignals, preferences: Preferences): { fit: LocationFit; score: number; reasons: string[] } {
   const profile = preferences.locationProfile;
-  const base = profile.baseLocation.toLowerCase();
+  const base = profile.baseLocation.trim().toLowerCase();
   const preferredRegions = profile.preferredRegions.map((region) => region.toLowerCase());
   const locations = signals.locations.map((location) => location.toLowerCase());
-  const taiwanMatch = locations.some((location) => location === base || (base === 'taiwan' && /taiwan/.test(location)));
+  const baseLocationMatch = Boolean(base) && locations.some((location) => location === base || location.includes(base) || base.includes(location));
   const regionMatch = signals.regions.some((region) => preferredRegions.includes(region.toLowerCase()));
   const timezoneMatch = signals.timezoneRequirements.some((timezone) => {
     const match = timezone.match(/(?:utc|gmt)\s*([+-])\s*(\d{1,2})/i);
-    if (!match) return /apac|asia|taipei|japan|singapore/i.test(timezone) && preferredRegions.some((region) => /apac|asia/i.test(region));
+    if (!match) return false;
     const offset = Number(match[2]) * (match[1] === '-' ? -1 : 1);
     return Math.abs(offset - profile.utcOffset) <= 3;
   });
   const reasons: string[] = [];
-  if (signals.workMode === 'onsite' && !taiwanMatch) return { fit: 'poor', score: 5, reasons: [`On-site outside ${profile.baseLocation}`] };
-  if (signals.constraint === 'restricted' && signals.workEligibility === 'country_specific' && !taiwanMatch) return { fit: 'poor', score: 15, reasons: [`Restricted to ${signals.locations.join(', ') || 'a specific location'}`] };
-  if (taiwanMatch) { reasons.push(`${profile.baseLocation} explicitly included`); return { fit: 'excellent', score: 100, reasons }; }
+  const hasLocationProfile = Boolean(base || preferredRegions.length);
+  if (signals.workMode === 'onsite' && hasLocationProfile && !baseLocationMatch) return { fit: 'poor', score: 5, reasons: [`On-site outside ${profile.baseLocation || 'the preferred location'}`] };
+  if (signals.constraint === 'restricted' && signals.workEligibility === 'country_specific' && hasLocationProfile && !baseLocationMatch) return { fit: 'poor', score: 15, reasons: [`Restricted to ${signals.locations.join(', ') || 'a specific location'}`] };
+  if (baseLocationMatch) { reasons.push(`${profile.baseLocation} explicitly included`); return { fit: 'excellent', score: 100, reasons }; }
   // A region or timezone mention only helps when the listing is actually
   // portable.  Without this guard, ordinary description text such as
   // "customers in Asia" or "our worldwide team" makes an onsite job look
@@ -135,18 +179,19 @@ function registryMatch(text: string, post: NormalizedPost, registry: Array<{ mat
   }).map((entry) => entry.label);
 }
 
-function classifySignal(text: string, post: NormalizedPost, author: AuthorSignals, registry: Array<{ match_type: string; pattern: string; label: string }>, methods: ContactMethod[]): { category: SignalCategory; quality: number; breakdown: ScoreContribution[]; reasons: string[]; suppressed: boolean } {
+function classifySignal(text: string, post: NormalizedPost, author: AuthorSignals, registry: Array<{ match_type: string; pattern: string; label: string }>, methods: ContactMethod[], matchedRules: DetectionRule[], preferences: Preferences): { category: SignalCategory; quality: number; breakdown: ScoreContribution[]; reasons: string[]; suppressed: boolean } {
   const evidence = registryMatch(text, post, registry);
-  const activeDemand = /\b(looking for|seeking|need|hiring|hire|anyone know|anyone available|want to hire)\b/i.test(text);
-  const firstPerson = /\b(i'm|i am|we're|we are|my team|our team|founder|cto|hiring manager)\b/i.test(text);
-  const direct = /\b(we're hiring|we are hiring|i'm hiring|i am hiring|looking for (a|an|someone)|founding engineer|know any good (developers|engineers)|need a (contractor|developer|freelancer)|send me your portfolio)\b/i.test(text);
-  const service = /\b(looking for someone to build|need help (with|building)|integrate (stripe|paypal|an api)|internal dashboard|migrat(e|ing) (our |the )?infrastructure|reliable freelance (programmer|developer)|available for contract work|looking for a freelancer)\b/i.test(text) && (matchingTerms(text, ['backend', 'developer', 'engineer', 'software', 'dashboard', 'infrastructure', 'api', 'automation', 'stripe', 'node.js', 'typescript', 'python']).length > 0);
-  const referral = /\b(my team is hiring|our team is hiring|we're growing (the )?engineering team|happy to chat.*(interested|engineer|developer)|my company is hiring)\b/i.test(text);
+  const heuristics = heuristicConfig(preferences);
+  const activeDemand = matchesAny(text, heuristics.activeDemandTerms);
+  const firstPerson = matchesAny(text, heuristics.firstPersonTerms);
+  const direct = matchesAny(text, heuristics.directHiringTerms);
+  const service = matchesAny(text, heuristics.softwareRequestTerms) && matchesAny(text, heuristics.softwareEvidenceTerms);
+  const referral = matchesAny(text, heuristics.referralTerms);
   const hasApplicationLink = methods.some((method) => method.type === 'application_link');
   const firsthand = hasApplicationLink && firstPerson && activeDemand && !evidence.length;
-  const templateMarkers = ['new remote job alert', 'position:', 'company:', 'location:', 'category:', 'apply now', '#jobopportunity', '#remotejobs'].filter((marker) => text.toLowerCase().includes(marker)).length;
-  const automatedTemplate = templateMarkers >= 2 || /new remote job alert|job board|jobs? roundup|\d+ new jobs/i.test(text);
-  const selfPromotion = /\b(i am|i'm) (a |an )?(freelance|contract|software|web|backend|frontend) (developer|engineer|programmer)|looking for clients|hire me|available for work\b/i.test(text) && !activeDemand;
+  const templateMarkers = matchingTerms(text, heuristics.automatedTemplateTerms).length;
+  const automatedTemplate = templateMarkers >= Math.max(1, heuristics.automatedTemplateThreshold);
+  const selfPromotion = matchesAny(text, heuristics.selfPromotionTerms) && !activeDemand;
   let category: SignalCategory = 'uncertain';
   let suppressed = false;
   const reasons: string[] = [];
@@ -163,6 +208,10 @@ function classifySignal(text: string, post: NormalizedPost, author: AuthorSignal
   if (activeDemand && category !== 'aggregated_listing') addContribution(quality, 'Active demand language', 10, ['active request']);
   if (firstPerson && category !== 'aggregated_listing') addContribution(quality, 'Firsthand author context', 10, ['first-person or team context']);
   if (methods.length && category !== 'aggregated_listing') addContribution(quality, 'Actionable contact', 10, methods.map((method) => method.type));
+  const positiveRules = matchedRules.filter((rule) => !rule.negative);
+  const ruleEvidenceCap = configuredWeight(preferences, 'ruleEvidence', configuredWeight(preferences, 'hiring', 20));
+  const ruleEvidence = Math.min(ruleEvidenceCap, positiveRules.reduce((total, rule) => total + Math.max(0, Number(rule.weight) || 0), 0));
+  if (category !== 'aggregated_listing') addContribution(quality, 'Detection rule evidence', ruleEvidence, positiveRules.map((rule) => rule.name));
   if (selfPromotion) reasons.push('Possible self-promotion');
   const score = suppressed ? Math.min(15, base) : Math.min(100, quality.reduce((sum, item) => sum + item.points, 0));
   return { category, quality: score, breakdown: quality, reasons, suppressed };
@@ -173,32 +222,17 @@ export function analyzePost(post: NormalizedPost, rules: DetectionRule[], prefer
   const matches = rules.filter((rule) => rule.enabled && ruleMatches(text, rule));
   const matchedRules = matches.map((rule) => ({ id: rule.id, name: rule.name, pattern: rule.pattern, category: rule.category, negative: rule.negative }));
   const blocked = matches.some((rule) => rule.negative);
-  const positiveMatches = matches.filter((rule) => !rule.negative);
-  const technologies = matchingTerms(text, preferences.technologyTerms);
-  const roleTerms = matchingTerms(text, preferences.roleTerms);
-  const remoteTerms = matchingTerms(text, preferences.remoteTerms);
-  const internationalTerms = matchingTerms(text, preferences.internationalTerms);
-  const contractTerms = matchingTerms(text, preferences.contractTerms);
-  const contactTerms = matchingTerms(text, preferences.contactTerms);
   const methods = contactMethods(text);
   const extractedLocations = extractLocationSignals(text);
   const locationFit = evaluateLocationFit(extractedLocations, preferences);
-  const employmentTypes = [contractTerms.some((term) => /contract|freelance|consult|part-time/i.test(term)) ? 'contract/freelance' : '', /\bfull[- ]?time\b/i.test(text) ? 'full-time' : '', /\bpart[- ]?time\b/i.test(text) ? 'part-time' : ''].filter(Boolean);
-  const quality = classifySignal(text, post, author, registry, methods);
-  const breakdown: ScoreContribution[] = [];
-  const categoryWeight = (category: string, fallback: number) => Number.isFinite(Number(preferences.weights?.[category])) ? Number(preferences.weights[category]) : fallback;
-  addContribution(breakdown, 'Relevant role', Math.min(categoryWeight('role', 18), roleTerms.length * categoryWeight('role', 18)), roleTerms);
-  addContribution(breakdown, 'Technology match', Math.min(categoryWeight('technology', 28), technologies.length * 7), technologies);
-  addContribution(breakdown, 'Remote preference', Math.min(categoryWeight('remote', 12), remoteTerms.length * categoryWeight('remote', 12)), remoteTerms);
-  addContribution(breakdown, 'International signal', Math.min(categoryWeight('international', 8), internationalTerms.length * categoryWeight('international', 8)), internationalTerms);
-  addContribution(breakdown, 'Contract / freelance', Math.min(categoryWeight('contract', 10), contractTerms.length * categoryWeight('contract', 10)), contractTerms);
-  addContribution(breakdown, 'Direct contact signal', Math.min(categoryWeight('contact', 8), contactTerms.length * categoryWeight('contact', 8)), contactTerms);
-  const personalRelevance = blocked ? 0 : Math.min(100, Math.round(breakdown.reduce((total, item) => total + item.points, 0)));
-  return { matchedRules, technologies, employmentTypes, category: blocked ? 'uncertain' : quality.category, signalQuality: blocked ? 0 : quality.quality, signalQualityBreakdown: quality.breakdown, personalRelevance, personalRelevanceBreakdown: breakdown, contactMethods: methods, classificationReasons: quality.reasons, locationSignals: extractedLocations, locationFit: blocked ? 'unknown' : locationFit.fit, locationFitScore: blocked ? 0 : locationFit.score, locationFitReasons: blocked ? ['Blocked by a negative detection rule'] : locationFit.reasons, score: personalRelevance, breakdown, suppressed: blocked || quality.suppressed, blocked };
+  const relevance = scorePreferenceEvidence(text, preferences);
+  const quality = classifySignal(text, post, author, registry, methods, matches, preferences);
+  const personalRelevance = blocked ? 0 : relevance.score;
+  return { matchedRules, technologies: relevance.technologies, employmentTypes: relevance.employmentTypes, category: blocked ? 'uncertain' : quality.category, signalQuality: blocked ? 0 : quality.quality, signalQualityBreakdown: quality.breakdown, personalRelevance, personalRelevanceBreakdown: relevance.breakdown, contactMethods: methods, classificationReasons: quality.reasons, locationSignals: extractedLocations, locationFit: blocked ? 'unknown' : locationFit.fit, locationFitScore: blocked ? 0 : locationFit.score, locationFitReasons: blocked ? ['Blocked by a negative detection rule'] : locationFit.reasons, score: personalRelevance, breakdown: relevance.breakdown, suppressed: blocked || quality.suppressed, blocked };
 }
 
 export function notificationEligible(analysis: Analysis, recovered: boolean, preferences: Preferences): boolean {
-  if (!preferences.notificationsEnabled || analysis.suppressed || analysis.signalQuality < preferences.minimumNotificationSignalQuality || analysis.personalRelevance < preferences.minimumNotificationPersonalRelevance || analysis.locationFitScore < preferences.minimumNotificationLocationFitScore) return false;
+  if (!preferences.notificationsEnabled || analysis.suppressed || analysis.score < preferences.minimumNotificationScore || analysis.signalQuality < preferences.minimumNotificationSignalQuality || analysis.personalRelevance < preferences.minimumNotificationPersonalRelevance || analysis.locationFitScore < preferences.minimumNotificationLocationFitScore) return false;
   if (recovered && !preferences.notifyRecovered) return false;
   return true;
 }

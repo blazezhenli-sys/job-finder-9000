@@ -49,7 +49,9 @@ async function ensureAggregatorBoards() {
 }
 
 function notificationEligible(analysis: ReturnType<typeof analyzeListing>, preferences: Awaited<ReturnType<typeof getPreferences>>) {
-  return preferences.listingsNotificationsEnabled && analysis.locationFitScore >= preferences.minimumListingLocationFitScore;
+  return preferences.listingsNotificationsEnabled
+    && analysis.personalRelevance >= preferences.minimumListingRelevance
+    && analysis.locationFitScore >= preferences.minimumListingLocationFitScore;
 }
 
 type PollTaskResult = { status: 'completed' | 'failed'; listingsSeen: number; newListings: number; error?: string };

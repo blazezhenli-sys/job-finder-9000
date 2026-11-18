@@ -76,6 +76,18 @@ export interface LocationProfile {
   preferredRegions: string[];
 }
 
+export interface HeuristicPreferences {
+  activeDemandTerms: string[];
+  firstPersonTerms: string[];
+  directHiringTerms: string[];
+  softwareRequestTerms: string[];
+  softwareEvidenceTerms: string[];
+  referralTerms: string[];
+  automatedTemplateTerms: string[];
+  selfPromotionTerms: string[];
+  automatedTemplateThreshold: number;
+}
+
 export interface Analysis {
   matchedRules: MatchedRule[];
   technologies: string[];
@@ -111,6 +123,7 @@ export interface Preferences {
   contractTerms: string[];
   contactTerms: string[];
   weights: Record<string, number>;
+  heuristics: HeuristicPreferences;
   locationProfile: LocationProfile;
   listingsNotificationsEnabled: boolean;
   minimumListingRelevance: number;
