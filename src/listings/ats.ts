@@ -59,11 +59,16 @@ function compensationRecords(source: Record<string, unknown>): Record<string, un
   const records: Record<string, unknown>[] = [];
   const visited = new Set<object>();
   const visit = (value: unknown, depth: number) => {
+    if (Array.isArray(value)) {
+      if (depth > 3) return;
+      for (const item of value) visit(item, depth);
+      return;
+    }
     const current = record(value);
-    if (!current || visited.has(current) || depth > 2) return;
+    if (!current || visited.has(current) || depth > 3) return;
     visited.add(current);
     records.push(current);
-    for (const key of ['range', 'salary', 'salaryRange', 'compensation', 'compensationTier', 'amount', 'annual', 'hourly']) visit(current[key], depth + 1);
+    for (const key of ['range', 'salary', 'salaryRange', 'compensation', 'compensationTier', 'compensationTiers', 'summaryComponents', 'components', 'amount', 'annual', 'hourly']) visit(current[key], depth + 1);
   };
   visit(source, 0);
   return records;
@@ -105,10 +110,10 @@ export function normalizeCompensation(value: unknown): NormalizedCompensation {
   if (!value || typeof value !== 'object') return {};
   const source = value as Record<string, unknown>;
   const records = compensationRecords(source);
-  const description = records.map((item) => ['description', 'summary', 'salaryDescription', 'compensationDescription', 'salary', 'salaryRange'].map((key) => stringValue(item[key])).find(Boolean)).find(Boolean) ?? '';
+  const description = records.map((item) => ['description', 'summary', 'salaryDescription', 'salaryDescriptionHtml', 'compensationDescription', 'scrapeableCompensationSalarySummary', 'compensationTierSummary', 'tierSummary', 'salary', 'salaryRange'].map((key) => stringValue(item[key])).find(Boolean)).find(Boolean) ?? '';
   const parsed = description ? parseCompensationText(description) : {};
-  const minimum = ['min', 'minimum', 'salary_min', 'minSalary', 'minimumSalary', 'minAmount', 'minimumAmount'];
-  const maximum = ['max', 'maximum', 'salary_max', 'maxSalary', 'maximumSalary', 'maxAmount', 'maximumAmount'];
+  const minimum = ['min', 'minimum', 'salary_min', 'minSalary', 'minimumSalary', 'minAmount', 'minimumAmount', 'minValue'];
+  const maximum = ['max', 'maximum', 'salary_max', 'maxSalary', 'maximumSalary', 'maxAmount', 'maximumAmount', 'maxValue'];
   const findNumber = (keys: string[]) => records.map((item) => keys.map((key) => numericValue(item[key])).find((number) => number !== undefined)).find((number): number is number => number !== undefined);
   const min = findNumber(minimum) ?? parsed.min;
   const max = findNumber(maximum) ?? parsed.max;
@@ -129,7 +134,7 @@ export function compensationForAts(provider: AtsProvider, raw: unknown, descript
     : provider === 'ashby'
       ? ['compensation', 'compensationTierSummary', 'compensationTier', 'salaryRange', 'salary']
       : provider === 'lever'
-        ? ['salaryRange', 'salaryDescription', 'compensation', 'salary']
+        ? ['salaryRange', 'salaryDescription', 'salaryDescriptionHtml', 'compensation', 'salary']
         : provider === 'remotive'
           ? ['salary', 'compensation']
           : ['salary'];

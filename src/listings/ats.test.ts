@@ -31,6 +31,11 @@ describe('ATS adapters', () => {
     expect(job.applicationUrl).toContain('/application');
   });
 
+  it('normalizes Ashby nested compensation summaries', () => {
+    const [job] = parseAshbyJobs({ jobs: [{ id: 'ashby-2', title: 'Platform Engineer', descriptionPlain: 'Distributed team', jobUrl: 'https://jobs.ashbyhq.com/example/ashby-2', compensation: { compensationTierSummary: '$81K – $87K • 0.5% – 1.75% • Offers Bonus', scrapeableCompensationSalarySummary: '$81K - $87K', summaryComponents: [{ summary: '$81K - $87K', minValue: 81000, maxValue: 87000, currencyCode: 'USD', interval: '1 YEAR' }] } }] });
+    expect(job.compensation).toMatchObject({ min: 81000, max: 87000, currency: 'USD' });
+  });
+
   it('normalizes Lever categories and plain text', () => {
     const [job] = parseLeverJobs([{ id: 'lever-1', text: 'Senior Developer', description: '<p>Work from anywhere</p>', categories: { location: 'APAC', commitment: 'Full-time', level: 'Senior' }, hostedUrl: 'https://jobs.lever.co/example/lever-1', applyUrl: 'https://jobs.lever.co/example/lever-1/apply' }]);
     expect(job.location).toBe('APAC');
@@ -45,6 +50,8 @@ describe('ATS adapters', () => {
     expect(fieldJob.compensation).toMatchObject({ min: 160000, max: 190000, currency: 'USD', period: 'annually' });
     const [descriptionJob] = parseLeverJobs([{ id: 'lever-3', text: 'Developer', description: '<p>Compensation: $100,000–$130,000 per year.</p>', hostedUrl: 'https://jobs.lever.co/example/lever-3' }]);
     expect(descriptionJob.compensation).toMatchObject({ min: 100000, max: 130000, currency: 'USD', period: 'year' });
+    const [htmlJob] = parseLeverJobs([{ id: 'lever-4', text: 'Developer', description: '<p>Remote role</p>', salaryDescriptionHtml: '<p>$140,000 - $170,000 USD annually</p>', hostedUrl: 'https://jobs.lever.co/example/lever-4' }]);
+    expect(htmlJob.compensation).toMatchObject({ min: 140000, max: 170000, currency: 'USD', period: 'annually' });
   });
 
   it('normalizes aggregator postings with employer and geographic restriction data', () => {
