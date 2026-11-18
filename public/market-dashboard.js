@@ -84,7 +84,7 @@
   }
   ensureDashboardFilterControls();
   const filterNote = document.querySelector('#market-dashboard-advanced .subtle');
-  if (filterNote) filterNote.textContent = 'Selecting filters switches the charts to a current filtered view; unfiltered charts use historical snapshots.';
+  if (filterNote) filterNote.textContent = 'Selecting filters switches the charts to a current live view; window and cohort history controls apply when filters are cleared.';
 
   function setControls() {
     document.querySelector('#market-dashboard-window').value = String(state.windowDays);
