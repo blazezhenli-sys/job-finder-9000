@@ -272,7 +272,7 @@ const companySorts: Record<string, string> = {
   name: 'lower(e.name) ASC',
   engineering: 'active_listing_count DESC, lower(e.name) ASC',
   new: 'new_listings_7d DESC, lower(e.name) ASC',
-  recent: 'latest_hiring_activity DESC NULLS LAST, lower(e.name) ASC',
+  recent: 'latest_listing_date DESC NULLS LAST, lower(e.name) ASC',
   score: 'prospect_score DESC, lower(e.name) ASC'
 };
 
@@ -302,12 +302,13 @@ app.get('/api/companies', async (request) => {
       count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote')::int AS remote_listing_count,
       count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%')::int AS contract_listing_count,
       max(l.last_observed_at) AS latest_hiring_activity,
+      max(COALESCE(l.source_updated_at, l.first_observed_at)) FILTER (WHERE l.is_active) AS latest_listing_date,
       COALESCE(array_agg(DISTINCT b.provider) FILTER (WHERE b.id IS NOT NULL), '{}') AS providers
     FROM employers e LEFT JOIN job_boards b ON b.employer_id=e.id LEFT JOIN job_listings l ON l.board_id=b.id
     GROUP BY e.id
   )
   SELECT e.id, e.name, e.website, e.verified_domain, e.description, e.industry, e.headquarters, e.company_size, e.prospect_status, e.first_discovered_at, e.updated_at,
-    metrics.board_count, metrics.active_board_count, metrics.active_listing_count, metrics.new_listings_7d, metrics.new_listings_30d, metrics.active_engineering, metrics.new_engineering_7d, metrics.new_engineering_30d, metrics.remote_listing_count, metrics.contract_listing_count, metrics.latest_hiring_activity, metrics.providers
+    metrics.board_count, metrics.active_board_count, metrics.active_listing_count, metrics.new_listings_7d, metrics.new_listings_30d, metrics.active_engineering, metrics.new_engineering_7d, metrics.new_engineering_30d, metrics.remote_listing_count, metrics.contract_listing_count, metrics.latest_hiring_activity, metrics.latest_listing_date, metrics.providers
   FROM employers e JOIN metrics ON metrics.id=e.id ${where}`;
   const sort = companySorts[query.sort ?? ''] ?? companySorts.name;
   const result = await pool.query(`${select} ORDER BY ${sort} LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]);
