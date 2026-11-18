@@ -64,7 +64,7 @@
       <div class="market-panel"><h2>Market signals</h2><div id="market-dashboard-signals"><p class="subtle">No sufficiently supported signals yet.</p></div></div>
       <details class="market-panel market-analysis-tools"><summary>Analysis tools</summary><div class="segment-grid"><label>Segment A<select id="market-compare-a"><option value="">Choose category</option></select></label><label>Segment B<select id="market-compare-b"><option value="">Choose category</option></select></label><label>Work mode<select id="market-compare-work-mode"><option value="">Any work mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label><label>Employment<select id="market-compare-employment"><option value="">Any employment type</option><option value="full">Full-time</option><option value="contract">Contract</option><option value="freelance">Freelance</option></select></label></div><button id="market-compare-button" class="button secondary" type="button">Compare segments</button><div id="market-comparison" class="comparison-grid"><p class="subtle">Choose two categories to compare.</p></div><div class="market-taxonomy-tools"><h3>Technology taxonomy</h3><form id="market-taxonomy-form" class="filters"><input name="canonical" placeholder="Canonical technology" required><input name="alias" placeholder="Alias" required><button class="button secondary" type="submit">Add alias</button></form><div id="market-taxonomy" class="facet-list"></div></div></details>
     </div>
-    <aside id="market-evidence" class="market-evidence-panel hidden"><div class="company-panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2 id="market-evidence-title">Supporting data</h2><p id="market-evidence-note" class="subtle"></p></div><button id="market-evidence-close" class="button secondary" type="button">Close</button></div><div id="market-evidence-companies"></div><div id="market-evidence-listings"></div><div id="market-evidence-pagination" class="pagination"></div></aside>
+    <aside id="market-evidence" class="market-evidence-panel hidden"><div class="company-panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2 id="market-evidence-title">Supporting data</h2><p id="market-evidence-note" class="subtle"></p></div><div class="heading-actions"><button id="market-evidence-open-listings" class="button primary hidden" type="button">Open matching listings</button><button id="market-evidence-close" class="button secondary" type="button">Close</button></div></div><div id="market-evidence-companies"></div><div id="market-evidence-listings"></div><div id="market-evidence-pagination" class="pagination"></div></aside>
   `;
 
   function setControls() {
@@ -201,11 +201,26 @@
     document.querySelector('#market-dashboard-signals').innerHTML = (data.signals || []).length ? data.signals.slice(0, 8).map((signal) => '<div class="signal-row"><div><strong>' + esc(signal.employer_name || (signal.dimension ? 'Market · ' + signal.dimension : 'Market')) + '</strong><div class="subtle">' + esc(signal.explanation) + '</div><div class="health-detail">' + esc(String(signal.signal_type).replaceAll('_', ' ')) + ' · ' + Number(signal.sample_size || 0).toLocaleString() + ' baseline days</div></div><button type="button" class="button secondary market-signal-evidence-button" data-signal-id="' + esc(signal.id) + '">Evidence</button></div>').join('') : '<p class="subtle">No sufficiently supported signals yet.</p>';
   }
 
+  function openListingsForDimension(value) {
+    const filterIds = ['#listing-category', '#listing-specialty', '#listing-region', '#listing-country', '#listing-technology'];
+    const filterId = { category: '#listing-category', specialty: '#listing-specialty', technology: '#listing-technology', region: '#listing-region', country: '#listing-country' }[state.dimension];
+    if (!filterId || value === '__remaining' || typeof showView !== 'function' || typeof loadListings !== 'function') return;
+    showView('listings');
+    filterIds.forEach((id) => { const select = document.querySelector(id); if (select) select.value = ''; });
+    const select = document.querySelector(filterId);
+    if (!select) return;
+    if (![...select.options].some((option) => option.value === value)) select.add(new Option(label(value), value));
+    select.value = value;
+    document.querySelector('#market-evidence')?.classList.add('hidden');
+    loadListings(true).catch(console.error);
+  }
+
   async function openSignalEvidence(id) {
     const data = await api('/api/market/signals/' + encodeURIComponent(id));
     const panel = document.querySelector('#market-evidence');
     panel.classList.remove('hidden');
     document.querySelector('#market-evidence-title').textContent = 'Signal evidence';
+    document.querySelector('#market-evidence-open-listings').classList.add('hidden');
     document.querySelector('#market-evidence-note').textContent = data.signal?.explanation || 'Listings and companies supporting this signal.';
     document.querySelector('#market-evidence-companies').innerHTML = '<h3>Contributing employers</h3>' + ((data.companies || []).length ? data.companies.map((company) => '<div class="health-row"><a class="source-link market-evidence-company" href="#" data-company-id="' + esc(company.id) + '">' + esc(company.name) + '</a></div>').join('') : '<p class="subtle">No company evidence recorded.</p>');
     document.querySelector('#market-evidence-listings').innerHTML = '<h3>Supporting listings</h3>' + ((data.evidence || []).length ? data.evidence.map((listing) => '<div class="market-evidence-listing"><div><strong>' + esc(listing.title) + '</strong><div class="subtle">' + esc(listing.employer_name) + ' · ' + esc(listing.provider) + ' · ' + esc(listing.location || 'Location unknown') + '</div></div><a class="source-link" href="' + esc(listing.application_url || listing.original_url || '#') + '" target="_blank" rel="noreferrer">Source ↗</a></div>').join('') : '<p class="subtle">No listing evidence recorded.</p>');
@@ -287,6 +302,8 @@
     panel.classList.remove('hidden');
     document.querySelector('#market-evidence-title').textContent = label(value) + ' evidence';
     document.querySelector('#market-evidence-note').textContent = 'Current evidence matching the selected sector and period.';
+    const openListingsButton = document.querySelector('#market-evidence-open-listings');
+    openListingsButton.classList.toggle('hidden', !['category', 'specialty', 'technology', 'region', 'country'].includes(state.dimension) || value === '__remaining');
     try {
       const data = await api('/api/market/drilldown?' + evidenceQuery(value).toString());
       document.querySelector('#market-evidence-companies').innerHTML = '<h3>Contributing employers</h3>' + ((data.companies || []).length ? data.companies.map((company) => '<div class="health-row"><a class="source-link market-evidence-company" href="#" data-company-id="' + esc(company.employer_id) + '">' + esc(company.employer_name) + '</a><span>' + Number(company.listings || 0).toLocaleString() + ' listings · ' + Number(company.engineering || 0).toLocaleString() + ' engineering</span></div>').join('') : '<p class="subtle">No employers match this evidence view.</p>');
@@ -315,6 +332,7 @@
   ['window', 'cohort', 'granularity', 'dimension', 'mode'].forEach((name) => document.querySelector('#market-dashboard-' + name).addEventListener('change', (event) => { state[name === 'window' ? 'windowDays' : name] = name === 'window' ? Number(event.target.value) : event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
   document.querySelector('#market-dashboard-advanced-toggle').addEventListener('click', () => document.querySelector('#market-dashboard-advanced').classList.toggle('hidden'));
   document.querySelector('#market-evidence-close').addEventListener('click', () => { state.focus = ''; persist(); document.querySelector('#market-evidence').classList.add('hidden'); });
+  document.querySelector('#market-evidence-open-listings').addEventListener('click', () => openListingsForDimension(state.focus));
   document.querySelector('#market-compare-button').addEventListener('click', () => loadMarketComparison().catch(console.error));
   document.querySelector('#market-taxonomy-form').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); await api('/api/market/taxonomy/technologies', { method: 'PATCH', body: JSON.stringify(Object.fromEntries(form.entries())) }); event.currentTarget.reset(); await loadTaxonomy(); });
   const originalMarketLoad = loadMarket;
