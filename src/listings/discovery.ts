@@ -170,9 +170,10 @@ function addUrl(seen: Map<string, Candidate>, provider: DiscoveryProvider, url: 
   if (!seen.has(key)) seen.set(key, { ...candidate, source, metadata });
 }
 
-async function archiveCandidates(provider: DiscoveryProvider, mode: DiscoveryMode, jobId: string, onProgress: (progress: { archiveDomain: string; archiveRowsSeen: number; archiveCandidatesFound: number; archiveLastUrl?: string }) => Promise<void>) {
+async function archiveCandidates(provider: DiscoveryProvider, mode: DiscoveryMode, jobId: string, onProgress: (progress: { archiveDomain: string; archiveRowsSeen: number; archiveCandidatesFound: number; archiveLastUrl?: string }) => Promise<void>, since?: Date) {
   const seen = new Map<string, Candidate>();
-  const from = mode === 'recent' ? `&from=${new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10).replaceAll('-', '')}` : '';
+  const fromDate = since ?? new Date(Date.now() - 30 * 86_400_000);
+  const from = mode === 'recent' ? `&from=${fromDate.toISOString().slice(0, 10).replaceAll('-', '')}` : '';
   let rowsSeen = 0;
   for (const domain of domains[provider]) {
     const endpoint = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(domain)}&matchType=domain&fl=original&collapse=urlkey&output=json&filter=statuscode:200${from}`;
@@ -226,11 +227,11 @@ async function commonCrawlCandidates(provider: DiscoveryProvider) {
 async function upsertCandidate(candidate: Candidate, jobId?: string) {
   await pool.query(`INSERT INTO listing_discovery_candidates (provider, board_identifier, board_url, employer_name, discovery_source, status, metadata, source_url, discovery_job_id)
     VALUES ($1,$2,$3,$4,$5,'candidate',$6,$7,$8)
-    ON CONFLICT (provider, board_identifier) DO UPDATE SET board_url=EXCLUDED.board_url, employer_name=CASE WHEN listing_discovery_candidates.employer_name='' THEN EXCLUDED.employer_name ELSE listing_discovery_candidates.employer_name END, discovery_source=CASE WHEN listing_discovery_candidates.discovery_source='manual' THEN EXCLUDED.discovery_source ELSE listing_discovery_candidates.discovery_source END, metadata=listing_discovery_candidates.metadata || EXCLUDED.metadata, source_url=CASE WHEN listing_discovery_candidates.source_url='' THEN EXCLUDED.source_url ELSE listing_discovery_candidates.source_url END, last_seen_at=now(), discovery_job_id=COALESCE(EXCLUDED.discovery_job_id, listing_discovery_candidates.discovery_job_id), next_validation_at=now(), updated_at=now()`, [candidate.provider, candidate.identifier, candidate.boardUrl, candidate.identifier, candidate.source, JSON.stringify(candidate.metadata ?? {}), candidate.sourceUrl, jobId ?? null]);
+    ON CONFLICT (provider, board_identifier) DO UPDATE SET board_url=EXCLUDED.board_url, employer_name=CASE WHEN listing_discovery_candidates.employer_name='' THEN EXCLUDED.employer_name ELSE listing_discovery_candidates.employer_name END, discovery_source=CASE WHEN listing_discovery_candidates.discovery_source='manual' THEN EXCLUDED.discovery_source ELSE listing_discovery_candidates.discovery_source END, metadata=listing_discovery_candidates.metadata || EXCLUDED.metadata, source_url=CASE WHEN listing_discovery_candidates.source_url='' THEN EXCLUDED.source_url ELSE listing_discovery_candidates.source_url END, last_seen_at=now(), discovery_job_id=COALESCE(EXCLUDED.discovery_job_id, listing_discovery_candidates.discovery_job_id), next_validation_at=CASE WHEN listing_discovery_candidates.status='candidate' THEN GREATEST(listing_discovery_candidates.next_validation_at, now()) ELSE listing_discovery_candidates.next_validation_at END, updated_at=now()`, [candidate.provider, candidate.identifier, candidate.boardUrl, candidate.identifier, candidate.source, JSON.stringify(candidate.metadata ?? {}), candidate.sourceUrl, jobId ?? null]);
 }
 
-async function extractExistingOpportunityUrls(jobId: string) {
-  const result = await pool.query('SELECT id, source_url, text, signal_category FROM opportunities');
+async function extractExistingOpportunityUrls(jobId: string, since?: Date) {
+  const result = await pool.query(`SELECT id, source_url, text, signal_category FROM opportunities${since ? ' WHERE first_seen_at >= $1' : ''}`, since ? [since] : []);
   for (const row of result.rows) for (const candidate of extractAtsBoardsFromText(`${row.source_url ?? ''}\n${row.text ?? ''}`)) await upsertCandidate({ ...candidate, source: `post_url:${row.signal_category}`, metadata: { opportunityId: row.id, signalCategory: row.signal_category } }, jobId);
 }
 
@@ -278,7 +279,12 @@ async function runDiscoveryJob(jobId: string) {
   const selected = (job.providers as string[]).filter((value): value is DiscoveryProvider => providers.includes(value as DiscoveryProvider));
   const cursor = (job.cursor ?? {}) as { collected?: string[]; postsExtracted?: boolean; currentProvider?: DiscoveryProvider; phase?: string; validationProcessed?: number; validationTotal?: number };
   try {
-    if (!cursor.postsExtracted) { cursor.phase = 'extracting_posts'; await updateJob(jobId, { cursor: JSON.stringify(cursor) }); await extractExistingOpportunityUrls(jobId); cursor.postsExtracted = true; await updateJob(jobId, { cursor: JSON.stringify(cursor) }); }
+    let recentSince: Date | undefined;
+    if (job.mode === 'recent') {
+      const previous = await pool.query(`SELECT max(finished_at) AS finished_at FROM listing_discovery_jobs WHERE status='completed' AND id <> $1`, [jobId]);
+      recentSince = previous.rows[0]?.finished_at ? new Date(previous.rows[0].finished_at) : undefined;
+    }
+    if (!cursor.postsExtracted) { cursor.phase = 'extracting_posts'; await updateJob(jobId, { cursor: JSON.stringify(cursor) }); await extractExistingOpportunityUrls(jobId, recentSince); cursor.postsExtracted = true; await updateJob(jobId, { cursor: JSON.stringify(cursor) }); }
     let collectionError: string | undefined;
     for (const provider of selected) {
       if (cursor.collected?.includes(provider)) continue;
@@ -291,7 +297,7 @@ async function runDiscoveryJob(jobId: string) {
         candidates = await archiveCandidates(provider, job.mode as DiscoveryMode, jobId, async (progress) => {
           Object.assign(cursor, progress);
           await updateJob(jobId, { cursor: JSON.stringify(cursor) });
-        });
+        }, recentSince);
         streamed = true;
       } catch (error) {
         try {
@@ -349,9 +355,20 @@ async function runDiscoveryCycle() {
   } finally { discoveryRunning = false; }
 }
 
+async function shouldRunDiscoveryOnStartup(intervalMs: number) {
+  const active = await pool.query(`SELECT 1 FROM listing_discovery_jobs WHERE status IN ('queued','running') LIMIT 1`);
+  if (active.rows[0]) return true;
+  const pendingFailed = await pool.query(`SELECT 1 FROM listing_discovery_jobs j JOIN listing_discovery_candidates c ON c.discovery_job_id=j.id WHERE j.status='failed' AND c.status='candidate' LIMIT 1`);
+  if (pendingFailed.rows[0]) return true;
+  const latest = await pool.query(`SELECT finished_at, updated_at FROM listing_discovery_jobs ORDER BY updated_at DESC LIMIT 1`);
+  if (!latest.rows[0]) return true;
+  const lastActivity = latest.rows[0].finished_at ?? latest.rows[0].updated_at;
+  return Date.now() - new Date(lastActivity).getTime() >= intervalMs;
+}
+
 export async function startListingDiscovery(intervalMs: number) {
   if (!opportunityListener) { opportunityListener = (data) => { const row = data as { source_url?: string; text?: string; signal_category?: string }; void Promise.all(extractAtsBoardsFromText(`${row.source_url ?? ''}\n${row.text ?? ''}`).map((candidate) => upsertCandidate({ ...candidate, source: `post_event:${row.signal_category ?? 'unknown'}` }))).catch((error) => console.error('ATS URL discovery failed', error)); }; events.on('opportunity', opportunityListener); }
-  void runDiscoveryCycle().catch((error) => console.error('listing discovery failed', error));
+  if (await shouldRunDiscoveryOnStartup(intervalMs)) void runDiscoveryCycle().catch((error) => console.error('listing discovery failed', error));
   return setInterval(() => void runDiscoveryCycle().catch((error) => console.error('listing discovery failed', error)), intervalMs);
 }
 
