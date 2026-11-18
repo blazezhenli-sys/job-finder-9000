@@ -274,7 +274,7 @@ const companySorts: Record<string, string> = {
   engineering: 'active_listing_count DESC, lower(e.name) ASC',
   new: 'new_listings_7d DESC, lower(e.name) ASC',
   recent: 'latest_listing_date DESC NULLS LAST, lower(e.name) ASC',
-  score: 'prospect_score DESC, lower(e.name) ASC'
+  score: `LEAST(100, active_listing_count * 3 + new_listings_7d * 10 + CASE WHEN latest_hiring_activity >= now() - interval '30 days' THEN 20 ELSE 0 END) DESC, lower(e.name) ASC`
 };
 
 app.get('/api/companies', async (request) => {
