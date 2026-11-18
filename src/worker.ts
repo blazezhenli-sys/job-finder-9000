@@ -11,6 +11,7 @@ import { startListingPolling } from './listings/service.js';
 import { startListingDiscovery } from './listings/discovery.js';
 import { backfillListingMetadata } from './listings/company.js';
 import { backfillListingCompensation } from './listings/salary.js';
+import { backfillListingClassification } from './listings/classification.js';
 
 let started = false;
 const sources: SourceAdapter[] = [];
@@ -38,6 +39,7 @@ export async function startWorkers() {
   if (config.enableListings && config.enableListingDiscovery) discoveryTimer = await startListingDiscovery(config.listingDiscoveryIntervalMs);
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));
+  if (config.enableListings) void backfillListingClassification().catch((error) => console.error('listing classification backfill failed', error));
   void deliverNotifications();
 }
 

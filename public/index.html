@@ -13,6 +13,7 @@
   <main class="shell">
     <nav class="tabs" aria-label="Sections">
       <button class="tab active" data-view="listings">Listings <span id="listing-count" class="tab-count">0</span></button>
+      <button class="tab" data-view="market">Market</button>
       <button class="tab" data-view="companies">Companies</button>
       <button class="tab" data-view="polling">Polling tasks</button>
       <button class="tab" data-view="monitoring">Monitoring</button>
@@ -20,6 +21,14 @@
       <button class="tab" data-view="authors">Authors</button>
       <button class="tab" data-view="settings">Preferences</button>
     </nav>
+
+    <section id="view-market" class="view">
+      <div class="page-heading"><div><p class="eyebrow">MARKET OBSERVABILITY</p><h1>Market Explorer</h1><p class="subtle">Explore observed openings by category, specialty, technology, geography, and employer. Aggregates are calculated server-side and link back to supporting listings.</p></div><div class="heading-actions"><button id="refresh-market" class="button secondary" type="button">Refresh</button></div></div>
+      <div class="stats" id="market-stats"><div class="stat"><span>Active listings</span><strong>—</strong></div><div class="stat"><span>Employers</span><strong>—</strong></div><div class="stat"><span>Engineering openings</span><strong>—</strong></div><div class="stat"><span>Remote openings</span><strong>—</strong></div><div class="stat"><span>Salary coverage</span><strong>—</strong></div></div>
+      <div class="toolbar"><div class="filters market-filters"><input id="market-search" placeholder="Search titles and descriptions"><select id="market-active"><option value="true">Active listings</option><option value="all">All listings</option><option value="false">Inactive listings</option></select><select id="market-category"><option value="">All job categories</option></select><select id="market-provider"><option value="">All ATS providers</option><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever</option><option value="remotive">Remotive</option><option value="adzuna">Adzuna</option></select><select id="market-specialty"><option value="">All specialties</option></select><select id="market-work-mode"><option value="">All work modes</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option><option value="unknown">Unknown</option></select><select id="market-region"><option value="">All regions</option></select><select id="market-technology"><option value="">All technologies</option></select><input id="market-employer" placeholder="Employer"><button id="apply-market-filter" class="button secondary" type="button">Apply</button></div></div>
+      <div class="market-grid"><div class="market-panel"><h2>Job categories</h2><div id="market-categories" class="facet-list"></div></div><div class="market-panel"><h2>Engineering specialties</h2><div id="market-specialties" class="facet-list"></div></div><div class="market-panel"><h2>Technologies</h2><div id="market-technologies" class="facet-list"></div></div><div class="market-panel"><h2>Regions</h2><div id="market-regions" class="facet-list"></div></div></div>
+      <div class="market-panel"><div class="company-panel-heading"><div><h2>Supporting listings</h2><p id="market-result-note" class="subtle"></p></div></div><div id="market-listings" class="market-listings"><div class="empty"><p>Loading market data…</p></div></div></div>
+    </section>
 
     <section id="view-feed" class="view">
       <div class="page-heading"><div><p class="eyebrow">REAL-TIME DISCOVERY</p><h1>Hiring signals</h1><p class="subtle">Fresh intent from public conversations, scored transparently.</p></div><div class="heading-actions"><button id="sample-btn" class="button secondary hidden">Load sample posts</button><button id="refresh-btn" class="button secondary">Refresh</button></div></div>

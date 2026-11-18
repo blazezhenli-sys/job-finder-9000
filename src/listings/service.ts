@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { adapterFor, normalizeCompensation } from './ats.js';
 import { analyzeListing } from './pipeline.js';
-import { classifyEngineeringSpecialties, extractListingTechnologies } from './company.js';
+import { classifyListing } from './classification.js';
 import { getPreferences, pool, withTransaction } from '../db.js';
 import { config } from '../config.js';
 import type { JobBoard, NormalizedJobListing } from '../types.js';
@@ -72,6 +74,15 @@ async function markFailure(board: JobBoard, error: unknown): Promise<string> {
   return message;
 }
 
+async function recordListingEvent(client: PoolClient, listingId: string, boardId: string, eventType: string, observedAt: Date, sourceUpdatedAt: Date | null | undefined, previousValue: unknown, currentValue: unknown) {
+  await client.query(`INSERT INTO listing_events (listing_id, board_id, event_type, observed_at, source_updated_at, previous_value, current_value)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)`, [listingId, boardId, eventType, observedAt, sourceUpdatedAt ?? null, JSON.stringify(previousValue ?? {}), JSON.stringify(currentValue ?? {})]);
+}
+
+function descriptionHash(value: string): string {
+  return createHash('md5').update(value).digest('hex');
+}
+
 async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typeof getPreferences>>, taskId: string): Promise<PollTaskResult> {
   await pool.query(`UPDATE listing_poll_tasks SET status='running', started_at=now() WHERE id=$1`, [taskId]);
   events.emit('listing-task', { taskId, status: 'running', boardId: board.id, provider: board.provider, boardIdentifier: board.boardIdentifier });
@@ -86,7 +97,10 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
     return result;
   }
   const observedIds = listings.map((listing) => listing.providerJobId);
-  const existing = await pool.query('SELECT id, provider_job_id, first_observed_at, is_active FROM job_listings WHERE board_id=$1', [board.id]);
+  const existing = await pool.query(`SELECT id, provider_job_id, first_observed_at, is_active, consecutive_missing_checks,
+      title, location, remote_mode, employment_type, compensation_min, compensation_max, compensation_currency, compensation_period,
+      md5(description) AS description_hash
+    FROM job_listings WHERE board_id=$1`, [board.id]);
   const existingIds = new Set(existing.rows.map((row) => row.provider_job_id as string));
   const baseline = !board.initializedAt;
   let newCount = 0;
@@ -97,19 +111,41 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
   await withTransaction(async (client) => {
     for (const listing of listings) {
       const analysis = analyzeListing(listing, preferences);
-      const engineeringSpecialties = classifyEngineeringSpecialties(listing);
-      const technologies = extractListingTechnologies(listing);
+      const classification = classifyListing(listing);
+      const engineeringSpecialties = classification.engineeringSpecialties;
+      const technologies = classification.technologies;
       if (engineeringSpecialties.length) engineeringCount += 1;
       const compensation = normalizeCompensation(listing.compensation);
       const isNew = !existingIds.has(listing.providerJobId);
       if (isNew) newCount += 1;
       if (isNew && engineeringSpecialties.length) newEngineeringCount += 1;
       const result = await client.query(`INSERT INTO job_listings
-        (board_id, provider, provider_job_id, title, description_html, description, department, team, location, secondary_locations, remote_mode, geographic_restrictions, employment_type, seniority, compensation, compensation_min, compensation_max, compensation_currency, compensation_period, compensation_estimated, salary_backfilled_at, application_url, original_url, published_at, source_updated_at, first_observed_at, last_observed_at, last_successful_board_check, is_active, consecutive_missing_checks, personal_relevance, relevance_breakdown, location_signals, location_fit, location_fit_score, location_fit_reasons, raw, status, company_name, engineering_specialties, technologies)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now(),$21,$22,$23,$24,COALESCE((SELECT first_observed_at FROM job_listings WHERE board_id=$1 AND provider_job_id=$3),$25),$25,$25,true,0,$26,$27,$28,$29,$30,$31,$32,'new',$33,$34,$35)
-        ON CONFLICT (board_id, provider_job_id) DO UPDATE SET title=EXCLUDED.title, description_html=EXCLUDED.description_html, description=EXCLUDED.description, department=EXCLUDED.department, team=EXCLUDED.team, location=EXCLUDED.location, secondary_locations=EXCLUDED.secondary_locations, remote_mode=EXCLUDED.remote_mode, geographic_restrictions=EXCLUDED.geographic_restrictions, employment_type=EXCLUDED.employment_type, seniority=EXCLUDED.seniority, compensation=EXCLUDED.compensation, compensation_min=EXCLUDED.compensation_min, compensation_max=EXCLUDED.compensation_max, compensation_currency=EXCLUDED.compensation_currency, compensation_period=EXCLUDED.compensation_period, compensation_estimated=EXCLUDED.compensation_estimated, salary_backfilled_at=now(), application_url=EXCLUDED.application_url, original_url=EXCLUDED.original_url, published_at=EXCLUDED.published_at, source_updated_at=EXCLUDED.source_updated_at, last_observed_at=EXCLUDED.last_observed_at, last_successful_board_check=EXCLUDED.last_successful_board_check, is_active=true, consecutive_missing_checks=0, personal_relevance=EXCLUDED.personal_relevance, relevance_breakdown=EXCLUDED.relevance_breakdown, location_signals=EXCLUDED.location_signals, location_fit=EXCLUDED.location_fit, location_fit_score=EXCLUDED.location_fit_score, location_fit_reasons=EXCLUDED.location_fit_reasons, raw=EXCLUDED.raw, company_name=EXCLUDED.company_name, engineering_specialties=EXCLUDED.engineering_specialties, technologies=EXCLUDED.technologies, updated_at=now()
-        RETURNING id`, [board.id, board.provider, listing.providerJobId, listing.title, listing.descriptionHtml ?? '', listing.description, listing.department ?? '', listing.team ?? '', listing.location ?? '', JSON.stringify(listing.secondaryLocations ?? []), listing.remoteMode ?? 'unknown', JSON.stringify(listing.geographicRestrictions ?? []), listing.employmentType ?? '', listing.seniority ?? '', JSON.stringify(listing.compensation ?? {}), compensation.min ?? null, compensation.max ?? null, compensation.currency ?? '', compensation.period ?? '', Boolean(compensation.estimated), listing.applicationUrl, listing.originalUrl, listing.publishedAt, listing.updatedAt, checkedAt, analysis.personalRelevance, JSON.stringify(analysis.relevanceBreakdown), JSON.stringify(analysis.locationSignals), analysis.locationFit, analysis.locationFitScore, JSON.stringify(analysis.locationFitReasons), JSON.stringify(listing.raw), listing.companyName ?? '', JSON.stringify(engineeringSpecialties), JSON.stringify(technologies)]);
+        (board_id, provider, provider_job_id, title, description_html, description, department, team, location, secondary_locations, remote_mode, geographic_restrictions, employment_type, seniority, compensation, compensation_min, compensation_max, compensation_currency, compensation_period, compensation_estimated, salary_backfilled_at, application_url, original_url, published_at, source_updated_at, first_observed_at, last_observed_at, last_successful_board_check, is_active, consecutive_missing_checks, personal_relevance, relevance_breakdown, location_signals, location_fit, location_fit_score, location_fit_reasons, raw, status, company_name, engineering_specialties, technologies, job_category, primary_specialty, classification_version, classification_method)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now(),$21,$22,$23,$24,COALESCE((SELECT first_observed_at FROM job_listings WHERE board_id=$1 AND provider_job_id=$3),$25),$25,$25,true,0,$26,$27,$28,$29,$30,$31,$32,'new',$33,$34,$35,$36,$37,$38,$39)
+        ON CONFLICT (board_id, provider_job_id) DO UPDATE SET title=EXCLUDED.title, description_html=EXCLUDED.description_html, description=EXCLUDED.description, department=EXCLUDED.department, team=EXCLUDED.team, location=EXCLUDED.location, secondary_locations=EXCLUDED.secondary_locations, remote_mode=EXCLUDED.remote_mode, geographic_restrictions=EXCLUDED.geographic_restrictions, employment_type=EXCLUDED.employment_type, seniority=EXCLUDED.seniority, compensation=EXCLUDED.compensation, compensation_min=EXCLUDED.compensation_min, compensation_max=EXCLUDED.compensation_max, compensation_currency=EXCLUDED.compensation_currency, compensation_period=EXCLUDED.compensation_period, compensation_estimated=EXCLUDED.compensation_estimated, salary_backfilled_at=now(), application_url=EXCLUDED.application_url, original_url=EXCLUDED.original_url, published_at=EXCLUDED.published_at, source_updated_at=EXCLUDED.source_updated_at, last_observed_at=EXCLUDED.last_observed_at, last_successful_board_check=EXCLUDED.last_successful_board_check, is_active=true, consecutive_missing_checks=0, personal_relevance=EXCLUDED.personal_relevance, relevance_breakdown=EXCLUDED.relevance_breakdown, location_signals=EXCLUDED.location_signals, location_fit=EXCLUDED.location_fit, location_fit_score=EXCLUDED.location_fit_score, location_fit_reasons=EXCLUDED.location_fit_reasons, raw=EXCLUDED.raw, company_name=EXCLUDED.company_name, engineering_specialties=EXCLUDED.engineering_specialties, technologies=EXCLUDED.technologies, job_category=EXCLUDED.job_category, primary_specialty=EXCLUDED.primary_specialty, classification_version=EXCLUDED.classification_version, classification_method=EXCLUDED.classification_method, updated_at=now()
+        RETURNING id`, [board.id, board.provider, listing.providerJobId, listing.title, listing.descriptionHtml ?? '', listing.description, listing.department ?? '', listing.team ?? '', listing.location ?? '', JSON.stringify(listing.secondaryLocations ?? []), listing.remoteMode ?? 'unknown', JSON.stringify(listing.geographicRestrictions ?? []), listing.employmentType ?? '', listing.seniority ?? '', JSON.stringify(listing.compensation ?? {}), compensation.min ?? null, compensation.max ?? null, compensation.currency ?? '', compensation.period ?? '', Boolean(compensation.estimated), listing.applicationUrl, listing.originalUrl, listing.publishedAt, listing.updatedAt, checkedAt, analysis.personalRelevance, JSON.stringify(analysis.relevanceBreakdown), JSON.stringify(analysis.locationSignals), analysis.locationFit, analysis.locationFitScore, JSON.stringify(analysis.locationFitReasons), JSON.stringify(listing.raw), listing.companyName ?? '', JSON.stringify(engineeringSpecialties), JSON.stringify(technologies), classification.jobCategory, classification.primarySpecialty, classification.version, classification.method]);
+      const listingId = result.rows[0].id as string;
+      const previous = existing.rows.find((row) => row.provider_job_id === listing.providerJobId);
+      const currentCompensation = { min: compensation.min ?? null, max: compensation.max ?? null, currency: compensation.currency ?? '', period: compensation.period ?? '' };
+      const currentDescriptionHash = descriptionHash(listing.description);
+      if (isNew) {
+        if (!baseline) await recordListingEvent(client, listingId, board.id, 'first_observed', checkedAt, listing.updatedAt, {}, { title: listing.title, providerJobId: listing.providerJobId });
+      } else {
+        if (!previous.is_active) await recordListingEvent(client, listingId, board.id, 'reappeared', checkedAt, listing.updatedAt, { isActive: false }, { isActive: true });
+        if (previous.title !== listing.title) await recordListingEvent(client, listingId, board.id, 'title_changed', checkedAt, listing.updatedAt, { title: previous.title }, { title: listing.title });
+        if (previous.location !== (listing.location ?? '')) await recordListingEvent(client, listingId, board.id, 'location_changed', checkedAt, listing.updatedAt, { location: previous.location }, { location: listing.location ?? '' });
+        if (previous.remote_mode !== (listing.remoteMode ?? 'unknown')) await recordListingEvent(client, listingId, board.id, 'work_mode_changed', checkedAt, listing.updatedAt, { workMode: previous.remote_mode }, { workMode: listing.remoteMode ?? 'unknown' });
+        if (previous.employment_type !== (listing.employmentType ?? '')) await recordListingEvent(client, listingId, board.id, 'employment_type_changed', checkedAt, listing.updatedAt, { employmentType: previous.employment_type }, { employmentType: listing.employmentType ?? '' });
+        const previousCompensation = { min: previous.compensation_min ?? null, max: previous.compensation_max ?? null, currency: previous.compensation_currency ?? '', period: previous.compensation_period ?? '' };
+        if (JSON.stringify(previousCompensation) !== JSON.stringify(currentCompensation)) await recordListingEvent(client, listingId, board.id, 'compensation_changed', checkedAt, listing.updatedAt, previousCompensation, currentCompensation);
+        if (previous.description_hash !== currentDescriptionHash) await recordListingEvent(client, listingId, board.id, 'description_changed', checkedAt, listing.updatedAt, { hash: previous.description_hash }, { hash: currentDescriptionHash });
+      }
       if (isNew && !baseline && notificationEligible(analysis, preferences)) await client.query('INSERT INTO listing_notifications (listing_id) VALUES ($1) ON CONFLICT (listing_id) DO NOTHING', [result.rows[0].id]);
+    }
+    for (const row of existing.rows) {
+      if (row.is_active && !observedIds.includes(row.provider_job_id) && Number(row.consecutive_missing_checks) + 1 >= 3) {
+        await recordListingEvent(client, row.id, board.id, 'removed', checkedAt, null, { isActive: true }, { isActive: false });
+      }
     }
     await client.query(`UPDATE job_listings SET consecutive_missing_checks=consecutive_missing_checks+1, is_active=CASE WHEN consecutive_missing_checks+1 >= 3 THEN false ELSE is_active END, updated_at=now()
       WHERE board_id=$1 AND is_active=true AND NOT (provider_job_id = ANY($2::text[]))`, [board.id, observedIds]);

@@ -7,6 +7,8 @@ import { sendTestEmail } from './notifications.js';
 import { events, processPost } from './pipeline-service.js';
 import { createDiscoveryJob, getDiscoveryJobs } from './listings/discovery.js';
 import { calculateProspectScore, engineeringSpecialtyLabels } from './listings/company.js';
+import { getMarketSummary, type MarketQuery } from './listings/market.js';
+import { jobCategoryLabels } from './listings/classification.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 
 const app = Fastify({ logger: true });
@@ -32,6 +34,11 @@ app.get('/api/health', async (_request, reply) => {
   } catch (error) {
     return reply.code(503).send({ ok: false, database: 'error', error: error instanceof Error ? error.message : String(error) });
   }
+});
+
+app.get('/api/market/summary', async (request) => {
+  const query = request.query as MarketQuery & { limit?: string };
+  return { ...(await getMarketSummary(query)), labels: { categories: jobCategoryLabels } };
 });
 
 app.get('/api/opportunities', async (request) => {
@@ -226,9 +233,13 @@ app.patch('/api/companies/:id', async (request, reply) => {
 });
 
 app.get('/api/listings/:id', async (request, reply) => {
-  const result = await pool.query(`SELECT l.*, b.board_identifier, b.board_url, e.id AS employer_id, e.name AS employer_name, e.website AS employer_website FROM job_listings l JOIN job_boards b ON b.id = l.board_id JOIN employers e ON e.id = b.employer_id WHERE l.id = $1`, [(request.params as { id: string }).id]);
+  const listingId = (request.params as { id: string }).id;
+  const [result, eventsResult] = await Promise.all([
+    pool.query(`SELECT l.*, b.board_identifier, b.board_url, e.id AS employer_id, e.name AS employer_name, e.website AS employer_website FROM job_listings l JOIN job_boards b ON b.id = l.board_id JOIN employers e ON e.id = b.employer_id WHERE l.id = $1`, [listingId]),
+    pool.query(`SELECT event_type, observed_at, source_updated_at, previous_value, current_value, metadata FROM listing_events WHERE listing_id=$1 ORDER BY observed_at DESC LIMIT 100`, [listingId])
+  ]);
   if (!result.rows[0]) return reply.code(404).send({ error: 'Listing not found' });
-  return result.rows[0];
+  return { ...result.rows[0], events: eventsResult.rows };
 });
 
 app.patch('/api/listings/:id', async (request, reply) => {
