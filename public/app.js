@@ -1,5 +1,22 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { opportunities: [], rules: [], settings: null, listingPage: 0, listingTotal: 0, boardPage: 0, boardTotal: 0, companyPage: 0, companyTotal: 0, marketPage: 0, marketTotal: 0 };
+function setupTheme() {
+  const root = document.documentElement;
+  const toggle = $('#theme-toggle');
+  if (!toggle) return;
+  const savedTheme = (() => { try { return localStorage.getItem('signal-hiring-theme'); } catch { return null; } })();
+  const applyTheme = (theme, persist = true) => {
+    root.dataset.theme = theme;
+    toggle.setAttribute('aria-pressed', String(theme === 'dark'));
+    toggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    toggle.querySelector('.theme-toggle-icon').textContent = theme === 'dark' ? '☀' : '☾';
+    toggle.querySelector('.theme-toggle-label').textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+    if (persist) { try { localStorage.setItem('signal-hiring-theme', theme); } catch { /* Theme still works when storage is unavailable. */ } }
+  };
+  applyTheme(savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : (root.dataset.theme || 'light'), false);
+  toggle.addEventListener('click', () => applyTheme(root.dataset.theme === 'dark' ? 'light' : 'dark'));
+}
+setupTheme();
 const directoryProspectStatus = $('#company-prospect-status'); if (directoryProspectStatus) directoryProspectStatus.id = 'company-directory-prospect-status';
 $('#company-sort')?.insertAdjacentHTML('afterbegin', '<option value="score">Highest prospect score</option>');
 let listingRefreshTimer;
