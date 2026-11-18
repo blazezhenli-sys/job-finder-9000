@@ -36,33 +36,111 @@ export type NormalizedCompensation = { min?: number; max?: number; currency?: st
 function numericValue(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value !== 'string') return undefined;
-  const cleaned = value.replace(/[$€£¥₹,\s]/g, '').trim();
+  const cleaned = value.replace(/[$€£¥₹₩₫₱,\s]/g, '').trim();
   if (!cleaned) return undefined;
-  const multiplier = /k$/i.test(cleaned) ? 1_000 : 1;
-  const parsed = Number(cleaned.replace(/k$/i, '')) * multiplier;
+  const multiplier = /k$/i.test(cleaned) ? 1_000 : /m$/i.test(cleaned) ? 1_000_000 : 1;
+  const parsed = Number(cleaned.replace(/[km]$/i, '')) * multiplier;
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function parseCompensationText(value: string): NormalizedCompensation {
-  const numbers = [...value.matchAll(/(?:[$€£¥₹]\s*)?(\d[\d,]*(?:\.\d+)?\s*[kK]?)/g)].map((match) => numericValue(match[1])).filter((number): number is number => number !== undefined);
-  const currency = value.match(/\b(USD|EUR|GBP|CAD|AUD|SGD|HKD|TWD|JPY|CNY|INR)\b/i)?.[1]?.toUpperCase() || (value.match(/[$€£¥₹]/)?.[0] ?? '');
-  const period = value.match(/\b(hour|hourly|day|daily|week|weekly|month|monthly|year|annual|annually)\b/i)?.[1]?.toLowerCase();
+  const numbers = [...value.matchAll(/(?:[$€£¥₹₩₫₱]\s*)?(\d[\d,]*(?:\.\d+)?\s*[kKmM]?)/g)].map((match) => numericValue(match[1])).filter((number): number is number => number !== undefined);
+  const symbol = value.match(/[$€£¥₹₩₫₱]/)?.[0];
+  const currency = value.match(/\b(USD|EUR|GBP|CAD|AUD|SGD|HKD|TWD|JPY|CNY|INR|KRW|VND|PHP)\b/i)?.[1]?.toUpperCase() || ({ '$': 'USD', '€': 'EUR', '£': 'GBP', '₹': 'INR', '₩': 'KRW', '₫': 'VND', '₱': 'PHP' }[symbol ?? ''] ?? symbol ?? '');
+  const period = value.match(/\b(hour|hourly|day|daily|week|weekly|month|monthly|year|yearly|yr|annual|annually|annum)\b/i)?.[1]?.toLowerCase();
   return { min: numbers[0], max: numbers[1] ?? numbers[0], currency: currency || undefined, period, estimated: /estimate|predicted/i.test(value), description: value };
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function compensationRecords(source: Record<string, unknown>): Record<string, unknown>[] {
+  const records: Record<string, unknown>[] = [];
+  const visited = new Set<object>();
+  const visit = (value: unknown, depth: number) => {
+    const current = record(value);
+    if (!current || visited.has(current) || depth > 2) return;
+    visited.add(current);
+    records.push(current);
+    for (const key of ['range', 'salary', 'salaryRange', 'compensation', 'compensationTier', 'amount', 'annual', 'hourly']) visit(current[key], depth + 1);
+  };
+  visit(source, 0);
+  return records;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string' && /^(true|false)$/i.test(value.trim())) return value.trim().toLowerCase() === 'true';
+  return undefined;
+}
+
+function hasCompensation(value: NormalizedCompensation): boolean {
+  return value.min !== undefined || value.max !== undefined || Boolean(value.currency) || Boolean(value.description);
+}
+
+function hasNumericCompensation(value: NormalizedCompensation): boolean {
+  return value.min !== undefined || value.max !== undefined;
+}
+
+/** Extract only salary-like fragments, avoiding unrelated numbers in job descriptions. */
+export function extractCompensationFromText(value: string): NormalizedCompensation {
+  const text = stripListingHtml(value).replace(/[ \t]+/g, ' ').trim();
+  if (!text) return {};
+  const fragments = text.split(/(?<=[.!?;])\s+|\n+/).map((fragment) => fragment.trim()).filter((fragment) => {
+    const salaryCue = /\b(salary|compensation|pay(?:\s+range)?|base(?:\s+pay|\s+salary)?|cash\s+range|total\s+cash|target\s+earnings?)\b/i.test(fragment);
+    const explicitAmount = /[$€£¥₹₩₫₱]\s*\d|\b\d[\d,]*(?:\.\d+)?\s*[kKmM]?\s*(?:USD|EUR|GBP|CAD|AUD|SGD|HKD|TWD|JPY|CNY|INR|KRW|VND|PHP)\b/i.test(fragment);
+    const annualRange = /\d[\d,]*(?:\.\d+)?\s*[kKmM]?\s*(?:-|–|—|to)\s*\d[\d,]*(?:\.\d+)?\s*[kKmM]?\s*(?:per\s+)?(?:hour|day|week|month|year|yr|annum|annual)/i.test(fragment);
+    return (salaryCue || explicitAmount || annualRange) && /\d/.test(fragment);
+  });
+  for (const fragment of fragments) {
+    const parsed = parseCompensationText(fragment);
+    if (parsed.min !== undefined || parsed.max !== undefined) return parsed;
+  }
+  return {};
 }
 
 export function normalizeCompensation(value: unknown): NormalizedCompensation {
   if (typeof value === 'string') return parseCompensationText(value);
   if (!value || typeof value !== 'object') return {};
   const source = value as Record<string, unknown>;
-  const nested = source.range && typeof source.range === 'object' ? source.range as Record<string, unknown> : source;
-  const description = stringValue(source.description || source.summary || source.salaryDescription);
+  const records = compensationRecords(source);
+  const description = records.map((item) => ['description', 'summary', 'salaryDescription', 'compensationDescription', 'salary', 'salaryRange'].map((key) => stringValue(item[key])).find(Boolean)).find(Boolean) ?? '';
   const parsed = description ? parseCompensationText(description) : {};
-  const min = numericValue(nested.min ?? nested.minimum ?? nested.salary_min) ?? parsed.min;
-  const max = numericValue(nested.max ?? nested.maximum ?? nested.salary_max) ?? parsed.max;
-  const currency = stringValue(nested.currency || nested.currencyCode || nested.currency_code) || parsed.currency;
-  const period = stringValue(nested.period || nested.interval || nested.payPeriod || nested.frequency) || parsed.period;
-  const estimated = Boolean(nested.estimated ?? nested.isEstimated ?? nested.salary_is_predicted ?? parsed.estimated);
+  const minimum = ['min', 'minimum', 'salary_min', 'minSalary', 'minimumSalary', 'minAmount', 'minimumAmount'];
+  const maximum = ['max', 'maximum', 'salary_max', 'maxSalary', 'maximumSalary', 'maxAmount', 'maximumAmount'];
+  const findNumber = (keys: string[]) => records.map((item) => keys.map((key) => numericValue(item[key])).find((number) => number !== undefined)).find((number): number is number => number !== undefined);
+  const min = findNumber(minimum) ?? parsed.min;
+  const max = findNumber(maximum) ?? parsed.max;
+  const currency = records.map((item) => stringValue(item.currency || item.currencyCode || item.currency_code)).find(Boolean) || parsed.currency;
+  const period = records.map((item) => stringValue(item.period || item.interval || item.payPeriod || item.frequency)).find(Boolean) || parsed.period;
+  const estimated = records.map((item) => booleanValue(item.estimated ?? item.isEstimated ?? item.salary_is_predicted)).find((value): value is boolean => value !== undefined) ?? parsed.estimated;
   return { min, max, currency: currency || undefined, period: period || undefined, estimated, description: description || undefined };
+}
+
+export function compensationForAts(provider: AtsProvider, raw: unknown, description: string): NormalizedCompensation {
+  const source = record(raw) ?? {};
+  if (provider === 'adzuna') {
+    const normalized = normalizeCompensation({ min: source.salary_min, max: source.salary_max, currency: source.salary_currency, estimated: source.salary_is_predicted });
+    if (hasNumericCompensation(normalized)) return normalized;
+  }
+  const keys = provider === 'greenhouse'
+    ? ['compensation', 'salary', 'salary_range', 'salaryRange', 'pay_range']
+    : provider === 'ashby'
+      ? ['compensation', 'compensationTierSummary', 'compensationTier', 'salaryRange', 'salary']
+      : provider === 'lever'
+        ? ['salaryRange', 'salaryDescription', 'compensation', 'salary']
+        : provider === 'remotive'
+          ? ['salary', 'compensation']
+          : ['salary'];
+  let descriptive: NormalizedCompensation | undefined;
+  for (const key of keys) {
+    const normalized = normalizeCompensation(source[key]);
+    if (hasNumericCompensation(normalized)) return normalized;
+    if (!descriptive && hasCompensation(normalized)) descriptive = normalized;
+  }
+  const extracted = extractCompensationFromText(description);
+  return hasNumericCompensation(extracted) ? extracted : descriptive ?? {};
 }
 
 function locations(value: unknown): string[] {
@@ -83,7 +161,7 @@ export function parseGreenhouseJobs(payload: unknown): NormalizedJobListing[] {
     const location = stringValue((job.location as { name?: unknown } | undefined)?.name ?? job.location);
     const offices = Array.isArray(job.offices) ? job.offices.flatMap((office) => [stringValue((office as { location?: unknown }).location), stringValue((office as { name?: unknown }).name)]).filter(Boolean) : [];
     const description = stripListingHtml(html);
-    return { providerJobId: String(job.id), title: stringValue(job.title), descriptionHtml: html, description, department: Array.isArray(job.departments) ? job.departments.map((item) => stringValue((item as { name?: unknown }).name)).filter(Boolean).join(', ') : '', location, secondaryLocations: [...new Set(offices.filter((item) => item !== location))], remoteMode: workMode([location, description].join('\n')), applicationUrl: stringValue(job.absolute_url), originalUrl: stringValue(job.absolute_url), publishedAt: date(job.first_published), updatedAt: date(job.updated_at), raw: job };
+    return { providerJobId: String(job.id), title: stringValue(job.title), descriptionHtml: html, description, department: Array.isArray(job.departments) ? job.departments.map((item) => stringValue((item as { name?: unknown }).name)).filter(Boolean).join(', ') : '', location, secondaryLocations: [...new Set(offices.filter((item) => item !== location))], remoteMode: workMode([location, description].join('\n')), compensation: compensationForAts('greenhouse', job, description), applicationUrl: stringValue(job.absolute_url), originalUrl: stringValue(job.absolute_url), publishedAt: date(job.first_published), updatedAt: date(job.updated_at), raw: job };
   });
 }
 
@@ -93,7 +171,7 @@ export function parseAshbyJobs(payload: unknown): NormalizedJobListing[] {
     const secondary = Array.isArray(job.secondaryLocations) ? job.secondaryLocations.flatMap((item) => [stringValue(item), stringValue((item as { location?: unknown }).location)]).filter(Boolean) : [];
     const location = stringValue(job.location);
     const description = stripListingHtml(stringValue(job.description || job.descriptionHtml || job.body));
-    return { providerJobId: String(job.id || job.jobUrl || job.applyUrl), title: stringValue(job.title), descriptionHtml: stringValue(job.descriptionHtml || job.description), description, department: stringValue(job.department), team: stringValue(job.team), location, secondaryLocations: [...new Set(secondary.filter((item) => item !== location))], remoteMode: workMode([location, description].join('\n'), job.isRemote ? 'remote' : job.workplaceType), employmentType: stringValue(job.employmentType || job.employmentStatus), compensation: job.compensation, applicationUrl: stringValue(job.applyUrl || job.jobUrl), originalUrl: stringValue(job.jobUrl || job.applyUrl), publishedAt: date(job.publishedAt || job.published_at), updatedAt: date(job.updatedAt || job.updated_at), raw: job };
+    return { providerJobId: String(job.id || job.jobUrl || job.applyUrl), title: stringValue(job.title), descriptionHtml: stringValue(job.descriptionHtml || job.description), description, department: stringValue(job.department), team: stringValue(job.team), location, secondaryLocations: [...new Set(secondary.filter((item) => item !== location))], remoteMode: workMode([location, description].join('\n'), job.isRemote ? 'remote' : job.workplaceType), employmentType: stringValue(job.employmentType || job.employmentStatus), compensation: compensationForAts('ashby', job, description), applicationUrl: stringValue(job.applyUrl || job.jobUrl), originalUrl: stringValue(job.jobUrl || job.applyUrl), publishedAt: date(job.publishedAt || job.published_at), updatedAt: date(job.updatedAt || job.updated_at), raw: job };
   });
 }
 
@@ -104,7 +182,7 @@ export function parseLeverJobs(payload: unknown): NormalizedJobListing[] {
     const descriptionHtml = stringValue(job.description || job.descriptionHtml || job.descriptionBody);
     const description = stripListingHtml(stringValue(job.descriptionPlain || descriptionHtml));
     const location = stringValue(categories.location || job.location);
-    return { providerJobId: String(job.id), title: stringValue(job.text), descriptionHtml, description, department: stringValue(categories.department), team: stringValue(categories.team), location, remoteMode: workMode([location, description].join('\n'), job.workplaceType), employmentType: stringValue(categories.commitment || job.commitment), seniority: stringValue(categories.level), compensation: job.salaryRange || (job.salaryDescription ? { description: job.salaryDescription } : undefined), applicationUrl: stringValue(job.applyUrl || (job.urls as { apply?: unknown } | undefined)?.apply), originalUrl: stringValue(job.hostedUrl || (job.urls as { show?: unknown } | undefined)?.show), publishedAt: date(job.createdAt), updatedAt: date(job.updatedAt), raw: job };
+    return { providerJobId: String(job.id), title: stringValue(job.text), descriptionHtml, description, department: stringValue(categories.department), team: stringValue(categories.team), location, remoteMode: workMode([location, description].join('\n'), job.workplaceType), employmentType: stringValue(categories.commitment || job.commitment), seniority: stringValue(categories.level), compensation: compensationForAts('lever', job, description), applicationUrl: stringValue(job.applyUrl || (job.urls as { apply?: unknown } | undefined)?.apply), originalUrl: stringValue(job.hostedUrl || (job.urls as { show?: unknown } | undefined)?.show), publishedAt: date(job.createdAt), updatedAt: date(job.updatedAt), raw: job };
   });
 }
 
@@ -113,7 +191,7 @@ export function parseRemotiveJobs(payload: unknown): NormalizedJobListing[] {
   return jobs.filter((job) => job.id != null && stringValue(job.title) && stringValue(job.url)).map((job) => {
     const location = stringValue(job.candidate_required_location);
     const description = stripListingHtml(stringValue(job.description));
-    return { providerJobId: String(job.id), companyName: stringValue(job.company_name), title: stringValue(job.title), descriptionHtml: stringValue(job.description), description, department: stringValue(job.category), secondaryLocations: Array.isArray(job.tags) ? job.tags.map(stringValue).filter(Boolean) : [], location, geographicRestrictions: location ? [location] : [], remoteMode: 'remote', employmentType: stringValue(job.job_type), compensation: stringValue(job.salary) ? { description: stringValue(job.salary) } : undefined, applicationUrl: stringValue(job.url), originalUrl: stringValue(job.url), publishedAt: date(job.publication_date), updatedAt: date(job.publication_date), raw: job };
+    return { providerJobId: String(job.id), companyName: stringValue(job.company_name), title: stringValue(job.title), descriptionHtml: stringValue(job.description), description, department: stringValue(job.category), secondaryLocations: Array.isArray(job.tags) ? job.tags.map(stringValue).filter(Boolean) : [], location, geographicRestrictions: location ? [location] : [], remoteMode: 'remote', employmentType: stringValue(job.job_type), compensation: compensationForAts('remotive', job, description), applicationUrl: stringValue(job.url), originalUrl: stringValue(job.url), publishedAt: date(job.publication_date), updatedAt: date(job.publication_date), raw: job };
   });
 }
 
@@ -124,7 +202,7 @@ export function parseAdzunaJobs(payload: unknown): NormalizedJobListing[] {
     const company = stringValue((job.company as { display_name?: unknown } | undefined)?.display_name ?? job.company);
     const salary = { min: job.salary_min, max: job.salary_max, currency: job.salary_currency, period: job.salary_is_predicted ? 'estimated' : undefined };
     const description = stripListingHtml(stringValue(job.description));
-    return { providerJobId: String(job.id), companyName: company, title: stringValue(job.title), descriptionHtml: stringValue(job.description), description, department: stringValue((job.category as { label?: unknown } | undefined)?.label), location, geographicRestrictions: location ? [location] : [], remoteMode: workMode([location, description].join('\n')), employmentType: [stringValue(job.contract_time), stringValue(job.contract_type)].filter(Boolean).join(' · '), compensation: Object.values(salary).some(Boolean) ? salary : undefined, applicationUrl: stringValue(job.redirect_url), originalUrl: stringValue(job.redirect_url), publishedAt: date(job.created), updatedAt: date(job.created), raw: job };
+    return { providerJobId: String(job.id), companyName: company, title: stringValue(job.title), descriptionHtml: stringValue(job.description), description, department: stringValue((job.category as { label?: unknown } | undefined)?.label), location, geographicRestrictions: location ? [location] : [], remoteMode: workMode([location, description].join('\n')), employmentType: [stringValue(job.contract_time), stringValue(job.contract_type)].filter(Boolean).join(' · '), compensation: compensationForAts('adzuna', job, description), applicationUrl: stringValue(job.redirect_url), originalUrl: stringValue(job.redirect_url), publishedAt: date(job.created), updatedAt: date(job.created), raw: job };
   });
 }
 

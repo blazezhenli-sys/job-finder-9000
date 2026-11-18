@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeCompensation, parseAdzunaJobs, parseAshbyJobs, parseGreenhouseJobs, parseLeverJobs, parseRemotiveJobs, stripListingHtml } from './ats.js';
+import { extractCompensationFromText, normalizeCompensation, parseAdzunaJobs, parseAshbyJobs, parseGreenhouseJobs, parseLeverJobs, parseRemotiveJobs, stripListingHtml } from './ats.js';
 
 describe('ATS adapters', () => {
   it('normalizes structured and free-text compensation', () => {
     expect(normalizeCompensation({ min: 100000, max: 140000, currency: 'USD', interval: 'year' })).toMatchObject({ min: 100000, max: 140000, currency: 'USD', period: 'year' });
     expect(normalizeCompensation('$120k - $150k USD per year')).toMatchObject({ min: 120000, max: 150000, currency: 'USD', period: 'year' });
+    expect(normalizeCompensation('€80k–€110k per annum')).toMatchObject({ min: 80000, max: 110000, currency: 'EUR', period: 'annum' });
+    expect(extractCompensationFromText('Databricks is the Data and AI company. More than 20,000 organizations worldwide. Salary range: $120,000–$150,000 per year.')).toMatchObject({ min: 120000, max: 150000, currency: 'USD', period: 'year' });
   });
 
   it('normalizes Greenhouse postings and preserves the apply link', () => {
@@ -16,11 +18,16 @@ describe('ATS adapters', () => {
     expect(job.department).toBe('Engineering');
   });
 
+  it('extracts salary disclosures from Greenhouse content', () => {
+    const [job] = parseGreenhouseJobs({ jobs: [{ id: 43, title: 'Data Engineer', content: '<p>More than 20,000 organizations worldwide.</p><p>Base salary: $120,000 - $150,000 per year.</p>', absolute_url: 'https://boards.greenhouse.io/example/jobs/43' }] });
+    expect(job.compensation).toMatchObject({ min: 120000, max: 150000, currency: 'USD', period: 'year' });
+  });
+
   it('normalizes Ashby remote metadata and compensation', () => {
     const [job] = parseAshbyJobs({ jobs: [{ id: 'ashby-1', title: 'Platform Engineer', descriptionHtml: '<p>Distributed team</p>', location: 'Anywhere', isRemote: true, department: 'Platform', jobUrl: 'https://jobs.ashbyhq.com/example/ashby-1', applyUrl: 'https://jobs.ashbyhq.com/example/ashby-1/application', compensation: { min: 100000 } }] });
     expect(job.providerJobId).toBe('ashby-1');
     expect(job.remoteMode).toBe('remote');
-    expect(job.compensation).toEqual({ min: 100000 });
+    expect(job.compensation).toMatchObject({ min: 100000 });
     expect(job.applicationUrl).toContain('/application');
   });
 
@@ -31,6 +38,13 @@ describe('ATS adapters', () => {
     expect(job.seniority).toBe('Senior');
     expect(job.remoteMode).toBe('remote');
     expect(stripListingHtml('&lt;p&gt;One&nbsp;two&lt;/p&gt;')).toBe('One two');
+  });
+
+  it('extracts salary from Lever fields and descriptions', () => {
+    const [fieldJob] = parseLeverJobs([{ id: 'lever-2', text: 'Staff Developer', description: '<p>Remote role</p>', salaryDescription: '$160k - $190k USD annually', hostedUrl: 'https://jobs.lever.co/example/lever-2' }]);
+    expect(fieldJob.compensation).toMatchObject({ min: 160000, max: 190000, currency: 'USD', period: 'annually' });
+    const [descriptionJob] = parseLeverJobs([{ id: 'lever-3', text: 'Developer', description: '<p>Compensation: $100,000–$130,000 per year.</p>', hostedUrl: 'https://jobs.lever.co/example/lever-3' }]);
+    expect(descriptionJob.compensation).toMatchObject({ min: 100000, max: 130000, currency: 'USD', period: 'year' });
   });
 
   it('normalizes aggregator postings with employer and geographic restriction data', () => {
