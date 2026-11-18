@@ -73,6 +73,20 @@ app.get('/api/market/drilldown', async (request, reply) => {
   return { dimension: query.dimension, value: query.value, companies: companies.rows, total: total.rows[0].count, limit, offset };
 });
 
+app.get('/api/market/employers', async (request) => {
+  const query = request.query as MarketQuery;
+  const values: unknown[] = [];
+  const where = marketWhere(query, values);
+  const limit = Math.min(50, Math.max(1, Number(query.limit) || 20));
+  const offset = Math.max(0, Number(query.offset) || 0);
+  const from = `job_listings l JOIN job_boards b ON b.id=l.board_id JOIN employers e ON e.id=b.employer_id`;
+  const [employers, total] = await Promise.all([
+    pool.query(`SELECT e.id AS employer_id, e.name AS employer_name, count(*)::int AS listings, count(*) FILTER (WHERE jsonb_array_length(COALESCE(l.engineering_specialties,'[]'::jsonb)) > 0)::int AS engineering, count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote, count(*) FILTER (WHERE l.first_observed_at >= now() - interval '7 days' AND l.first_observed_at > b.initialized_at)::int AS new_last_7_days FROM ${from} WHERE ${where} GROUP BY e.id, e.name ORDER BY engineering DESC, listings DESC, e.name LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]),
+    pool.query(`SELECT count(DISTINCT e.id)::int AS count FROM ${from} WHERE ${where}`, values)
+  ]);
+  return { employers: employers.rows, total: total.rows[0].count, limit, offset };
+});
+
 app.get('/api/market/trends', async (request) => {
   const query = request.query as { from?: string; to?: string; cohort?: string; dimension?: string; granularity?: string };
   const to = query.to && !Number.isNaN(Date.parse(query.to)) ? query.to : new Date().toISOString().slice(0, 10);

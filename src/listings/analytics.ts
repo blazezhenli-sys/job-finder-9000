@@ -73,6 +73,7 @@ export async function runDailyMarketSnapshot(snapshotDate = isoDate(new Date()))
       ON CONFLICT (snapshot_date, employer_id) DO UPDATE SET active_listings=EXCLUDED.active_listings, active_engineering=EXCLUDED.active_engineering, new_listings=EXCLUDED.new_listings, removed_listings=EXCLUDED.removed_listings, remote_listings=EXCLUDED.remote_listings, contract_listings=EXCLUDED.contract_listings, monitored_boards=EXCLUDED.monitored_boards, successful_boards=EXCLUDED.successful_boards, specialty_counts=EXCLUDED.specialty_counts, technology_counts=EXCLUDED.technology_counts, employment_type_counts=EXCLUDED.employment_type_counts, work_mode_counts=EXCLUDED.work_mode_counts`, [snapshotDate]);
 
     for (const cohort of ['all', 'stable_28d']) {
+      await client.query('DELETE FROM market_daily_metrics WHERE snapshot_date=$1 AND cohort=$2', [snapshotDate, cohort]);
       const cohortFilter = cohort === 'all' ? '' : `AND l.board_id IN (
         SELECT o.board_id FROM listing_board_observations o
         WHERE o.observed_at >= ($1::date - interval '27 days') AND o.observed_at < ($1::date + interval '1 day')
@@ -86,9 +87,10 @@ export async function runDailyMarketSnapshot(snapshotDate = isoDate(new Date()))
           SELECT 'category' AS dimension, COALESCE(NULLIF(job_category,''),'unknown') AS dimension_value, employer_id, is_new, remote_mode='remote' AS is_remote, (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') AS is_contract FROM base
           UNION ALL SELECT 'work_mode', remote_mode, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base
           UNION ALL SELECT 'employment_type', COALESCE(NULLIF(employment_type,''),'unknown'), employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base
-          UNION ALL SELECT 'specialty', values.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(engineering_specialties,'[]'::jsonb)) AS values(value)
-          UNION ALL SELECT 'technology', values.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(technologies,'[]'::jsonb)) AS values(value)
-          UNION ALL SELECT 'region', values.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(location_signals->'regions','[]'::jsonb)) AS values(value)
+          UNION ALL SELECT 'specialty', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(engineering_specialties,'[]'::jsonb)) AS facet(value)
+          UNION ALL SELECT 'technology', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(technologies,'[]'::jsonb)) AS facet(value)
+          UNION ALL SELECT 'region', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(location_signals->'regions','[]'::jsonb)) AS facet(value)
+          UNION ALL SELECT 'country', facet.value, employer_id, is_new, remote_mode='remote', (employment_type ILIKE '%contract%' OR employment_type ILIKE '%freelance%') FROM base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(NULLIF(location_signals->'countries','[]'::jsonb), location_signals->'locations','[]'::jsonb)) AS facet(value)
         )
         INSERT INTO market_daily_metrics (snapshot_date, cohort, dimension, dimension_value, active_listings, employers, new_listings, removed_listings, remote_listings, contract_listings)
         SELECT $1, $2, dimension, dimension_value, count(*)::int, count(DISTINCT employer_id)::int, count(*) FILTER (WHERE is_new)::int, 0, count(*) FILTER (WHERE is_remote)::int, count(*) FILTER (WHERE is_contract)::int
@@ -113,9 +115,10 @@ export async function runDailyMarketSnapshot(snapshotDate = isoDate(new Date()))
           SELECT 'category' AS dimension, COALESCE(NULLIF(current_value->>'jobCategory',''),'unknown') AS dimension_value FROM removed_base
           UNION ALL SELECT 'work_mode', COALESCE(NULLIF(current_value->>'remoteMode',''),'unknown') FROM removed_base
           UNION ALL SELECT 'employment_type', COALESCE(NULLIF(current_value->>'employmentType',''),'unknown') FROM removed_base
-          UNION ALL SELECT 'specialty', values.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'specialties','[]'::jsonb)) AS values(value)
-          UNION ALL SELECT 'technology', values.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'technologies','[]'::jsonb)) AS values(value)
-          UNION ALL SELECT 'region', values.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'locationSignals'->'regions','[]'::jsonb)) AS values(value)
+          UNION ALL SELECT 'specialty', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'specialties','[]'::jsonb)) AS facet(value)
+          UNION ALL SELECT 'technology', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'technologies','[]'::jsonb)) AS facet(value)
+          UNION ALL SELECT 'region', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(current_value->'locationSignals'->'regions','[]'::jsonb)) AS facet(value)
+          UNION ALL SELECT 'country', facet.value FROM removed_base CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(NULLIF(current_value->'locationSignals'->'countries','[]'::jsonb), current_value->'locationSignals'->'locations','[]'::jsonb)) AS facet(value)
         ), counts AS (
           SELECT dimension, dimension_value, count(*)::int AS removed_listings FROM removed_dimensions GROUP BY dimension, dimension_value
         )
@@ -128,7 +131,7 @@ export async function runDailyMarketSnapshot(snapshotDate = isoDate(new Date()))
 
 export async function getMarketTrends(from: string, to: string, cohort = 'all', dimension = 'category', granularity = 'day') {
   const safeCohort = ['all', 'stable_28d'].includes(cohort) ? cohort : 'all';
-  const safeDimension = ['category', 'specialty', 'technology', 'region', 'work_mode', 'employment_type', 'all'].includes(dimension) ? dimension : 'category';
+  const safeDimension = ['category', 'specialty', 'technology', 'region', 'country', 'work_mode', 'employment_type', 'all'].includes(dimension) ? dimension : 'category';
   const safeGranularity = ['day', 'week', 'month'].includes(granularity) ? granularity : 'day';
   const [metrics, runs] = await Promise.all([
     pool.query(`WITH grouped AS (
@@ -311,7 +314,7 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
         count(DISTINCT snapshot_date) FILTER (WHERE snapshot_date >= ($1::date - interval '6 days'))::int AS recent_days
       FROM market_daily_metrics
       WHERE cohort='stable_28d' AND snapshot_date >= ($1::date - interval '55 days') AND snapshot_date <= $1::date
-        AND dimension IN ('category','specialty','technology','region')
+        AND dimension IN ('category','specialty','technology','region','country')
       GROUP BY dimension, dimension_value
     )
     SELECT * FROM stats
@@ -321,7 +324,8 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
     category: `l.job_category=$1`,
     specialty: `l.engineering_specialties ? $1`,
     technology: `l.technologies ? $1`,
-    region: `l.location_signals->'regions' ? $1`
+    region: `l.location_signals->'regions' ? $1`,
+    country: `(l.location_signals->'countries' ? $1 OR l.location_signals->'locations' ? $1)`
   };
   for (const row of marketCandidates.rows) {
     const predicate = dimensionPredicate[row.dimension];
@@ -340,7 +344,7 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
         sum(active_listings) OVER (PARTITION BY snapshot_date, dimension) AS dimension_total
       FROM market_daily_metrics
       WHERE cohort='stable_28d' AND snapshot_date >= ($1::date - interval '55 days') AND snapshot_date <= $1::date
-        AND dimension IN ('category','specialty','technology','region')
+        AND dimension IN ('category','specialty','technology','region','country')
     ), stats AS (
       SELECT dimension, dimension_value,
         avg(active_listings::numeric / NULLIF(dimension_total,0)) FILTER (WHERE snapshot_date >= ($1::date - interval '6 days')) AS recent_share,
