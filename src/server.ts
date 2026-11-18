@@ -56,6 +56,22 @@ app.get('/api/market/signals', async (request) => {
   return { signals: result.rows };
 });
 
+app.get('/api/market/signals/:id', async (request, reply) => {
+  const signalId = (request.params as { id: string }).id;
+  const signal = await pool.query(`SELECT s.*, e.name AS employer_name
+    FROM market_signals s LEFT JOIN employers e ON e.id=s.employer_id WHERE s.id=$1`, [signalId]);
+  if (!signal.rows[0]) return reply.code(404).send({ error: 'Market signal not found' });
+  const evidenceIds = Array.isArray(signal.rows[0].supporting_listing_ids)
+    ? signal.rows[0].supporting_listing_ids.filter((value: unknown): value is string => typeof value === 'string')
+    : [];
+  const evidence = evidenceIds.length ? await pool.query(`SELECT l.id, l.title, l.location, l.remote_mode, l.job_category,
+      l.primary_specialty, l.application_url, l.original_url, l.source_updated_at, l.first_observed_at,
+      b.provider, b.board_identifier, e.id AS employer_id, e.name AS employer_name
+      FROM job_listings l JOIN job_boards b ON b.id=l.board_id JOIN employers e ON e.id=b.employer_id
+      WHERE l.id = ANY($1::uuid[]) ORDER BY l.source_updated_at DESC NULLS LAST, l.first_observed_at DESC`, [evidenceIds]) : { rows: [] };
+  return { signal: signal.rows[0], evidence: evidence.rows };
+});
+
 app.get('/api/market/taxonomy/technologies', async () => ({ terms: (await pool.query('SELECT canonical, alias, enabled, classification_version FROM listing_technology_aliases ORDER BY canonical, alias')).rows }));
 
 app.patch('/api/market/taxonomy/technologies', async (request, reply) => {
@@ -78,7 +94,23 @@ app.get('/api/market/compare', async (request, reply) => {
     return reply.code(400).send({ error: 'Segments must be valid JSON filter objects' });
   }
   const [a, b] = await Promise.all([getMarketSummary({ ...segmentA, active: segmentA.active ?? 'true', limit: '1' } as MarketQuery), getMarketSummary({ ...segmentB, active: segmentB.active ?? 'true', limit: '1' } as MarketQuery)]);
-  return { segments: { a: { filters: segmentA, totals: a.totals }, b: { filters: segmentB, totals: b.totals } } };
+  const shape = (summary: Awaited<ReturnType<typeof getMarketSummary>>) => {
+    const totals = summary.totals;
+    const active = Number(totals.active_listings) || 0;
+    return {
+      totals,
+      shares: {
+        remote: active ? Number(totals.remote_openings) / active : 0,
+        contract: active ? Number(totals.contract_openings) / active : 0,
+        salary_coverage: active ? Number(totals.listings_with_compensation) / active : 0
+      },
+      topSpecialties: summary.facets.specialties.slice(0, 8),
+      topTechnologies: summary.facets.technologies.slice(0, 8),
+      topRegions: summary.facets.regions.slice(0, 8),
+      employmentTypes: summary.facets.employmentTypes.slice(0, 8)
+    };
+  };
+  return { segments: { a: { filters: segmentA, ...shape(a) }, b: { filters: segmentB, ...shape(b) } } };
 });
 
 app.get('/api/opportunities', async (request) => {

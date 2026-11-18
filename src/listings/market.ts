@@ -1,4 +1,5 @@
 import { pool } from '../db.js';
+import { LISTING_CLASSIFICATION_VERSION } from './classification.js';
 
 export type MarketQuery = {
   active?: string;
@@ -18,6 +19,8 @@ export type MarketQuery = {
   minSalary?: string;
   maxAgeDays?: string;
   firstObservedAfter?: string;
+  limit?: string;
+  offset?: string;
 };
 
 const providers = ['greenhouse', 'ashby', 'lever', 'remotive', 'adzuna'];
@@ -57,8 +60,9 @@ export async function getMarketSummary(query: MarketQuery) {
   const values: unknown[] = [];
   const where = marketWhere(query, values);
   const from = `job_listings l JOIN job_boards b ON b.id=l.board_id JOIN employers e ON e.id=b.employer_id`;
-  const limit = Math.min(100, Math.max(1, finiteNumber((query as MarketQuery & { limit?: string }).limit) ?? 50));
-  const [totals, categories, specialties, technologies, providersResult, workModesResult, employmentTypes, seniority, regions, listings] = await Promise.all([
+  const limit = Math.min(100, Math.max(1, finiteNumber(query.limit) ?? 50));
+  const offset = Math.max(0, finiteNumber(query.offset) ?? 0);
+  const [totals, categories, specialties, technologies, providersResult, workModesResult, employmentTypes, seniority, regions, quality, listings] = await Promise.all([
     pool.query(`SELECT count(*)::int AS active_listings,
       count(DISTINCT e.id)::int AS monitored_employers,
       count(*) FILTER (WHERE l.job_category='software_engineering')::int AS engineering_openings,
@@ -75,8 +79,13 @@ export async function getMarketSummary(query: MarketQuery) {
     pool.query(`SELECT COALESCE(NULLIF(l.employment_type,''),'unknown') AS value, count(*)::int AS count FROM ${from} WHERE ${where} GROUP BY 1 ORDER BY count DESC, value LIMIT 25`, values),
     pool.query(`SELECT COALESCE(NULLIF(l.seniority,''),'unknown') AS value, count(*)::int AS count FROM ${from} WHERE ${where} GROUP BY 1 ORDER BY count DESC, value LIMIT 25`, values),
     pool.query(`SELECT values.value, count(*)::int AS count FROM ${from} CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(l.location_signals->'regions','[]'::jsonb)) AS values(value) WHERE ${where} GROUP BY values.value ORDER BY count DESC, values.value LIMIT 25`, values),
+    pool.query(`SELECT count(*)::int AS listings,
+      count(*) FILTER (WHERE l.classification_version >= $${values.length + 1})::int AS classified,
+      count(*) FILTER (WHERE l.location_signals ? 'workEligibility')::int AS location_classified,
+      count(*) FILTER (WHERE l.compensation_min IS NOT NULL OR l.compensation_max IS NOT NULL)::int AS salary_extracted
+      FROM ${from} WHERE ${where}`, [...values, LISTING_CLASSIFICATION_VERSION]),
     pool.query(`SELECT l.id, l.title, l.provider, l.company_name, e.id AS employer_id, e.name AS employer_name, l.location, l.remote_mode, l.job_category, l.primary_specialty, l.engineering_specialties, l.technologies, l.compensation_min, l.compensation_max, l.compensation_currency, l.compensation_period, l.application_url, l.original_url, l.published_at, l.first_observed_at
-      FROM ${from} WHERE ${where} ORDER BY l.source_updated_at DESC NULLS LAST, l.first_observed_at DESC LIMIT $${values.length + 1}`, [...values, limit])
+      FROM ${from} WHERE ${where} ORDER BY l.source_updated_at DESC NULLS LAST, l.first_observed_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset])
   ]);
   return {
     filters: query,
@@ -91,6 +100,8 @@ export async function getMarketSummary(query: MarketQuery) {
       seniority: seniority.rows,
       regions: regions.rows
     },
-    listings: listings.rows
+    dataQuality: quality.rows[0],
+    listings: listings.rows,
+    pagination: { limit, offset, total: Number(totals.rows[0]?.active_listings || 0) }
   };
 }

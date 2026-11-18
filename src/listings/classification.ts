@@ -143,9 +143,9 @@ export async function backfillListingClassification() {
   while (true) {
     const result = await pool.query<ClassificationRow>(`SELECT id, title, description, department, team
       FROM job_listings
-      WHERE classification_backfilled_at IS NULL
+      WHERE classification_backfilled_at IS NULL OR classification_version < $1
       ORDER BY id
-      LIMIT 500`);
+      LIMIT 500`, [LISTING_CLASSIFICATION_VERSION]);
     if (!result.rows.length) break;
     const updates = result.rows.map((row) => ({ id: row.id, ...classifyListing(row) }));
     await pool.query(`UPDATE job_listings AS listing

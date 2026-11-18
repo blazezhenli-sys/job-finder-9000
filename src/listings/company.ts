@@ -1,49 +1,8 @@
-import type { NormalizedJobListing } from '../types.js';
 import { pool } from '../db.js';
-
-export const engineeringSpecialtyLabels: Record<string, string> = {
-  backend_api: 'Backend / API',
-  frontend: 'Frontend',
-  full_stack: 'Full-stack',
-  infrastructure_devops: 'Infrastructure / DevOps / SRE',
-  data_engineering: 'Data engineering',
-  machine_learning_ai: 'Machine learning / AI',
-  mobile: 'Mobile',
-  security: 'Security',
-  qa_testing: 'QA / testing',
-  embedded_systems: 'Embedded / systems',
-  platform_infrastructure: 'Platform / infrastructure',
-  other_software: 'Other software engineering'
-};
-
-export const technologyVocabulary = ['typescript', 'javascript', 'python', 'node.js', 'react', 'vue', 'angular', 'java', 'c#', 'go', 'rust', 'ruby', 'postgresql', 'sql', 'aws', 'gcp', 'azure', 'kubernetes', 'terraform', 'docker', 'graphql', 'llm', 'pytorch', 'tensorflow'];
-
-const specialtyPatterns: Array<[string, RegExp]> = [
-  ['backend_api', /\b(back[ -]?end|api|server[ -]?side|node\.?js|golang|go engineer|java engineer|ruby|django|rails)\b/i],
-  ['frontend', /\b(front[ -]?end|ui engineer|react|vue|angular|svelte|css)\b/i],
-  ['full_stack', /\b(full[ -]?stack)\b/i],
-  ['infrastructure_devops', /\b(devops|sre|site reliability|platform engineer|infrastructure engineer|kubernetes|terraform|cloud engineer)\b/i],
-  ['data_engineering', /\b(data engineer|analytics engineer|etl|data platform)\b/i],
-  ['machine_learning_ai', /\b(machine learning|ml engineer|artificial intelligence|ai engineer|large language model|llm|generative ai)\b/i],
-  ['mobile', /\b(mobile engineer|ios|android|swift|kotlin)\b/i],
-  ['security', /\b(security engineer|application security|appsec|cybersecurity|cloud security)\b/i],
-  ['other_software', /\b(software engineer|software developer|systems engineer|developer|engineering manager|engineering lead)\b/i]
-];
-
-export function classifyEngineeringSpecialties(listing: Pick<NormalizedJobListing, 'title' | 'description' | 'department' | 'team'>): string[] {
-  const body = [listing.title, listing.description, listing.department, listing.team].filter(Boolean).join(' ');
-  return specialtyPatterns.filter(([, pattern]) => pattern.test(body)).map(([specialty]) => specialty);
-}
+export { engineeringSpecialtyLabels, classifyEngineeringSpecialties, extractListingTechnologies } from './classification.js';
+import { classifyEngineeringSpecialties, extractListingTechnologies } from './classification.js';
 
 export function isEngineeringListing(specialties: string[]): boolean { return specialties.length > 0; }
-
-export function extractListingTechnologies(listing: Pick<NormalizedJobListing, 'title' | 'description' | 'department' | 'team'>): string[] {
-  const body = [listing.title, listing.description, listing.department, listing.team].filter(Boolean).join(' ').toLowerCase();
-  return technologyVocabulary.filter((technology) => {
-    const escaped = technology.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^a-z0-9])${escaped.replace('node\\.js', 'node\\.?js')}([^a-z0-9]|$)`, 'i').test(body);
-  });
-}
 
 export type CompanyScoreInputs = { activeEngineering: number; newEngineering7d: number; contractListings: number; remoteListings: number; hasRecentActivity?: boolean };
 
