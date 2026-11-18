@@ -7,7 +7,6 @@
     cohort: 'stable_28d',
     granularity: 'week',
     dimension: 'category',
-    mode: 'both',
     focus: '',
     evidencePage: 0,
     filterCategory: '', filterSpecialty: '', filterTechnology: '', filterRegion: '', filterCountry: '', filterProvider: '', filterWorkMode: '', filterEmploymentType: ''
@@ -29,7 +28,6 @@
     state.cohort = query.get('marketCohort') || state.cohort;
     state.granularity = query.get('marketGranularity') || state.granularity;
     state.dimension = query.get('marketDimension') || state.dimension;
-    state.mode = query.get('marketMode') || state.mode;
     state.focus = query.get('marketFocus') || '';
     state.filterCategory = query.get('marketFilterCategory') || '';
     state.filterSpecialty = query.get('marketFilterSpecialty') || '';
@@ -42,7 +40,8 @@
   }
   function persist() {
     const query = new URLSearchParams(location.search);
-    [['marketWindow', state.windowDays], ['marketCohort', state.cohort], ['marketGranularity', state.granularity], ['marketDimension', state.dimension], ['marketMode', state.mode], ['marketFocus', state.focus], ['marketFilterCategory', state.filterCategory], ['marketFilterSpecialty', state.filterSpecialty], ['marketFilterTechnology', state.filterTechnology], ['marketFilterRegion', state.filterRegion], ['marketFilterCountry', state.filterCountry], ['marketFilterProvider', state.filterProvider], ['marketFilterWorkMode', state.filterWorkMode], ['marketFilterEmploymentType', state.filterEmploymentType]].forEach(([key, value]) => value ? query.set(key, String(value)) : query.delete(key));
+    query.delete('marketMode');
+    [['marketWindow', state.windowDays], ['marketCohort', state.cohort], ['marketGranularity', state.granularity], ['marketDimension', state.dimension], ['marketFocus', state.focus], ['marketFilterCategory', state.filterCategory], ['marketFilterSpecialty', state.filterSpecialty], ['marketFilterTechnology', state.filterTechnology], ['marketFilterRegion', state.filterRegion], ['marketFilterCountry', state.filterCountry], ['marketFilterProvider', state.filterProvider], ['marketFilterWorkMode', state.filterWorkMode], ['marketFilterEmploymentType', state.filterEmploymentType]].forEach(([key, value]) => value ? query.set(key, String(value)) : query.delete(key));
     history.replaceState(null, '', location.pathname + (query.toString() ? '?' + query.toString() : ''));
   }
   function dashboardQuery() {
@@ -62,7 +61,7 @@
 
   view.innerHTML = `
     <div class="page-heading"><div><p class="eyebrow">MARKET OBSERVABILITY</p><h1>Market dashboard</h1><p class="subtle">See where observed hiring is concentrated, how sector share changes, and which companies support the movement.</p></div><div class="heading-actions"><button id="market-dashboard-refresh" class="button secondary" type="button">Refresh</button></div></div>
-    <div class="market-dashboard-controls"><div class="filters"><label>Window<select id="market-dashboard-window"><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option></select></label><label>Cohort<select id="market-dashboard-cohort"><option value="stable_28d">Stable 28-day cohort</option><option value="all">All observed boards</option></select></label><label>Granularity<select id="market-dashboard-granularity"><option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option></select></label><label>Dimension<select id="market-dashboard-dimension"><option value="category">Job categories</option><option value="specialty">Engineering specialties</option><option value="technology">Technologies</option><option value="region">Regions</option><option value="country">Countries</option></select></label><label>Display<select id="market-dashboard-mode"><option value="both">Volume + share</option><option value="volume">Volume</option><option value="share">Share</option></select></label></div><button id="market-dashboard-advanced-toggle" class="button secondary" type="button">Filters</button></div>
+    <div class="market-dashboard-controls"><div class="filters"><label>Window<select id="market-dashboard-window"><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option></select></label><label>Cohort<select id="market-dashboard-cohort"><option value="stable_28d">Stable 28-day cohort</option><option value="all">All observed boards</option></select></label><label>Granularity<select id="market-dashboard-granularity"><option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option></select></label><label>Dimension<select id="market-dashboard-dimension"><option value="category">Job categories</option><option value="specialty">Engineering specialties</option><option value="technology">Technologies</option><option value="region">Regions</option><option value="country">Countries</option></select></label></div><button id="market-dashboard-advanced-toggle" class="button secondary" type="button">Filters</button></div>
     <div id="market-dashboard-advanced" class="market-dashboard-advanced hidden"><span class="subtle">These filters affect evidence drill-downs, not historical cohort calculations.</span><select id="market-dashboard-provider"><option value="">Any ATS provider</option><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever</option><option value="remotive">Remotive</option><option value="adzuna">Adzuna</option></select><select id="market-dashboard-work-mode"><option value="">Any work mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option><option value="unknown">Unknown</option></select><select id="market-dashboard-employment"><option value="">Any employment type</option><option value="full">Full-time</option><option value="contract">Contract</option><option value="freelance">Freelance</option></select></div>
     <div id="market-dashboard-stats" class="stats market-dashboard-stats"></div>
     <div id="market-dashboard-coverage" class="market-dashboard-coverage subtle"></div>
@@ -91,7 +90,6 @@
     document.querySelector('#market-dashboard-cohort').value = state.cohort;
     document.querySelector('#market-dashboard-granularity').value = state.granularity;
     document.querySelector('#market-dashboard-dimension').value = state.dimension;
-    document.querySelector('#market-dashboard-mode').value = state.mode;
     document.querySelector('#market-dashboard-filter-category').value = state.filterCategory;
     document.querySelector('#market-dashboard-filter-specialty').value = state.filterSpecialty;
     document.querySelector('#market-dashboard-filter-technology').value = state.filterTechnology;
@@ -295,9 +293,8 @@
     if (shareNote) shareNote.textContent = viewData.dimension === 'category' ? 'Each period totals 100% of the selected cohort.' : 'Relative share of classified observations; multi-label listings may overlap.';
     const volumeNote = document.querySelectorAll('.market-chart-panel .subtle')[0];
     if (volumeNote) volumeNote.textContent = isFiltered ? 'Current active openings matching the selected filters.' : 'Active observed openings over time.';
-    const mode = state.mode;
-    document.querySelector('#market-volume-chart').innerHTML = mode === 'share' ? '<p class="subtle">Volume hidden. Choose “Volume + share” or “Volume” to show absolute openings.</p>' : chartSvg(viewData, 'volume', 'Active openings by sector');
-    document.querySelector('#market-share-chart').innerHTML = mode === 'volume' ? '<p class="subtle">Share hidden. Choose “Volume + share” or “Share” to show sector mix.</p>' : chartSvg(viewData, 'share', 'Sector share over time');
+    document.querySelector('#market-volume-chart').innerHTML = chartSvg(viewData, 'volume', 'Active openings by sector');
+    document.querySelector('#market-share-chart').innerHTML = chartSvg(viewData, 'share', 'Sector share over time');
     document.querySelector('#market-flow-chart').innerHTML = isFiltered ? '<p class="subtle">Opening flow is available for the unfiltered historical view. Clear filters to compare new and removed openings over time.</p>' : flowSvg(viewData);
     renderRankings(viewData);
     renderSignals(data);
@@ -417,7 +414,7 @@
   params();
   setControls();
   document.querySelector('#market-dashboard-refresh').addEventListener('click', () => loadDashboard().catch(console.error));
-  ['window', 'cohort', 'granularity', 'dimension', 'mode'].forEach((name) => document.querySelector('#market-dashboard-' + name).addEventListener('change', (event) => { closeEvidence(); state[name === 'window' ? 'windowDays' : name] = name === 'window' ? Number(event.target.value) : event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
+  ['window', 'cohort', 'granularity', 'dimension'].forEach((name) => document.querySelector('#market-dashboard-' + name).addEventListener('change', (event) => { closeEvidence(); state[name === 'window' ? 'windowDays' : name] = name === 'window' ? Number(event.target.value) : event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
   [['filter-category', 'filterCategory'], ['filter-specialty', 'filterSpecialty'], ['filter-technology', 'filterTechnology'], ['filter-region', 'filterRegion'], ['filter-country', 'filterCountry'], ['provider', 'filterProvider'], ['work-mode', 'filterWorkMode'], ['employment', 'filterEmploymentType']].forEach(([id, key]) => document.querySelector('#market-dashboard-' + id).addEventListener('change', (event) => { closeEvidence(); state[key] = event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
   document.querySelector('#market-dashboard-advanced-toggle').addEventListener('click', () => document.querySelector('#market-dashboard-advanced').classList.toggle('hidden'));
   function closeEvidence() {
