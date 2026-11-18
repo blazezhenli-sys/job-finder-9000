@@ -26,7 +26,7 @@ export async function runDailyMarketSnapshot(snapshotDate = isoDate(new Date()))
     await client.query(`WITH listing_counts AS (
         SELECT b.employer_id,
           count(*) FILTER (WHERE l.is_active)::int AS active_listings,
-          count(*) FILTER (WHERE l.is_active AND l.job_category='software_engineering')::int AS active_engineering,
+          count(*) FILTER (WHERE l.is_active AND jsonb_array_length(COALESCE(l.engineering_specialties,'[]'::jsonb)) > 0)::int AS active_engineering,
           count(*) FILTER (WHERE l.is_active AND l.first_observed_at::date=$1 AND l.first_observed_at > b.initialized_at)::int AS new_listings,
           count(*) FILTER (WHERE l.is_active AND l.remote_mode='remote')::int AS remote_listings,
           count(*) FILTER (WHERE l.is_active AND (l.employment_type ILIKE '%contract%' OR l.employment_type ILIKE '%freelance%'))::int AS contract_listings
@@ -172,7 +172,7 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
       GROUP BY employer_id
     )
     SELECT stats.*, e.name AS employer_name,
-      COALESCE((SELECT jsonb_agg(l.id) FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=stats.employer_id AND l.is_active AND l.first_observed_at >= ($1::date - interval '6 days') AND l.first_observed_at <= ($1::date + interval '1 day') AND l.job_category='software_engineering'), '[]'::jsonb) AS supporting_listing_ids
+      COALESCE((SELECT jsonb_agg(l.id) FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=stats.employer_id AND l.is_active AND l.first_observed_at >= ($1::date - interval '6 days') AND l.first_observed_at <= ($1::date + interval '1 day') AND jsonb_array_length(COALESCE(l.engineering_specialties,'[]'::jsonb)) > 0), '[]'::jsonb) AS supporting_listing_ids
     FROM stats JOIN employers e ON e.id=stats.employer_id
     WHERE recent_new >= 3 AND baseline_days >= 28 AND recent_days >= 5
       AND recent_new >= GREATEST(3, ((baseline_new::numeric / 7) * 3))`, [snapshotDate]);
@@ -242,6 +242,33 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
         ON CONFLICT (signal_key) DO UPDATE SET baseline_value=EXCLUDED.baseline_value, observed_value=EXCLUDED.observed_value, change_ratio=EXCLUDED.change_ratio, sample_size=EXCLUDED.sample_size, explanation=EXCLUDED.explanation, data_quality=EXCLUDED.data_quality, last_seen_at=now(), status='active'`,
       [`company:${row.employer_id}:hiring_contraction`, row.employer_id, new Date(new Date(snapshotDate).getTime() - 6 * 86400000).toISOString().slice(0, 10), snapshotDate, baselineEngineering, recentEngineering, baselineEngineering ? recentEngineering / baselineEngineering : null, Number(row.baseline_days), `${row.employer_name} has ${recentEngineering.toFixed(1)} average active engineering openings versus ${baselineEngineering.toFixed(1)} in the preceding monitored period.`, 'Requires at least 21 successful baseline observation days.']);
     }
+  }
+
+  const compositionShifts = await pool.query(`WITH latest AS (
+      SELECT DISTINCT ON (employer_id) employer_id, snapshot_date, active_engineering, successful_boards, specialty_counts
+      FROM company_daily_metrics WHERE snapshot_date <= $1::date ORDER BY employer_id, snapshot_date DESC
+    ), baseline AS (
+      SELECT DISTINCT ON (employer_id) employer_id, snapshot_date, active_engineering, successful_boards, specialty_counts
+      FROM company_daily_metrics WHERE snapshot_date <= ($1::date - interval '21 days') ORDER BY employer_id, snapshot_date DESC
+    ), composition_values AS (
+      SELECT latest.employer_id, specialties.value AS specialty,
+        COALESCE((latest.specialty_counts->>specialties.value)::numeric,0) / NULLIF(latest.active_engineering,0) AS recent_share,
+        COALESCE((baseline.specialty_counts->>specialties.value)::numeric,0) / NULLIF(baseline.active_engineering,0) AS baseline_share,
+        latest.active_engineering, latest.successful_boards AS recent_successful_boards, baseline.successful_boards AS baseline_successful_boards,
+        latest.snapshot_date AS recent_date, baseline.snapshot_date AS baseline_date
+      FROM latest JOIN baseline USING (employer_id)
+      CROSS JOIN LATERAL jsonb_object_keys(latest.specialty_counts || baseline.specialty_counts) AS specialties(value)
+    )
+    SELECT composition_values.*, e.name AS employer_name FROM composition_values JOIN employers e ON e.id=composition_values.employer_id
+    WHERE recent_successful_boards > 0 AND baseline_successful_boards > 0 AND active_engineering >= 3
+      AND abs(COALESCE(recent_share,0) - COALESCE(baseline_share,0)) >= 0.25`, [snapshotDate]);
+  for (const row of compositionShifts.rows) {
+    const evidence = await pool.query(`SELECT l.id FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE l.is_active AND b.employer_id=$1 AND l.engineering_specialties ? $2 ORDER BY l.first_observed_at DESC LIMIT 25`, [row.employer_id, row.specialty]);
+    const direction = Number(row.recent_share || 0) >= Number(row.baseline_share || 0) ? 'increased' : 'decreased';
+    await pool.query(`INSERT INTO market_signals (signal_key, scope, employer_id, signal_type, dimension, period_start, period_end, baseline_value, observed_value, change_ratio, sample_size, explanation, data_quality, supporting_listing_ids)
+      VALUES ($1,'company',$2,'composition_shift',$3,$4::date,$5::date,$6,$7,$8,$9,$10,$11,$12)
+      ON CONFLICT (signal_key) DO UPDATE SET period_start=EXCLUDED.period_start, period_end=EXCLUDED.period_end, baseline_value=EXCLUDED.baseline_value, observed_value=EXCLUDED.observed_value, change_ratio=EXCLUDED.change_ratio, sample_size=EXCLUDED.sample_size, explanation=EXCLUDED.explanation, data_quality=EXCLUDED.data_quality, supporting_listing_ids=EXCLUDED.supporting_listing_ids, last_seen_at=now(), status='active'`,
+    [`company:${row.employer_id}:composition_shift:${row.specialty}`, row.employer_id, row.specialty, row.baseline_date, row.recent_date, Number(row.baseline_share || 0) * 100, Number(row.recent_share || 0) * 100, Number(row.baseline_share || 0) > 0 ? Number(row.recent_share || 0) / Number(row.baseline_share) : null, 2, `${row.employer_name}'s ${row.specialty} share ${direction} from ${(Number(row.baseline_share || 0) * 100).toFixed(1)}% to ${(Number(row.recent_share || 0) * 100).toFixed(1)}% of engineering openings.`, 'Requires two successful snapshots at least 21 days apart and at least 3 active engineering openings.', JSON.stringify(evidence.rows.map((item) => item.id))]);
   }
 
   const newSpecialties = await pool.query(`SELECT b.employer_id, specialties.value AS specialty, count(*)::int AS recent_listings,
@@ -336,5 +363,5 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
       ON CONFLICT (signal_key) DO UPDATE SET period_start=EXCLUDED.period_start, period_end=EXCLUDED.period_end, baseline_value=EXCLUDED.baseline_value, observed_value=EXCLUDED.observed_value, change_ratio=EXCLUDED.change_ratio, sample_size=EXCLUDED.sample_size, explanation=EXCLUDED.explanation, data_quality=EXCLUDED.data_quality, supporting_listing_ids=EXCLUDED.supporting_listing_ids, last_seen_at=now(), status='active'`,
     [`market:${row.dimension}:${row.dimension_value}:share_shift`, row.dimension, new Date(new Date(snapshotDate).getTime() - 6 * 86400000).toISOString().slice(0, 10), snapshotDate, Number(row.baseline_share) * 100, Number(row.recent_share) * 100, changeRatio, Number(row.baseline_days), `${row.dimension_value} share ${direction} from ${(Number(row.baseline_share) * 100).toFixed(1)}% to ${(Number(row.recent_share) * 100).toFixed(1)}% among stable monitored openings.`, 'Stable 28-day cohort; at least 10 current listings and 21 baseline observation days.', JSON.stringify(evidence.rows.map((item) => item.id))]);
   }
-  console.info(`Market signals evaluated: ${candidates.rows.length} company surge, ${specialtySurges.rows.length} specialty surge, ${companyBehavior.rows.length} company behavior, ${newSpecialties.rows.length} new specialties, ${persistentVacancies.rows.length} persistent vacancy candidates, ${marketCandidates.rows.length} market candidates, ${shareShifts.rows.length} share shifts`);
+  console.info(`Market signals evaluated: ${candidates.rows.length} company surge, ${specialtySurges.rows.length} specialty surge, ${compositionShifts.rows.length} composition shifts, ${companyBehavior.rows.length} company behavior, ${newSpecialties.rows.length} new specialties, ${persistentVacancies.rows.length} persistent vacancy candidates, ${marketCandidates.rows.length} market candidates, ${shareShifts.rows.length} share shifts`);
 }

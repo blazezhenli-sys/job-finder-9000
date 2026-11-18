@@ -76,7 +76,7 @@ export async function getMarketSummary(query: MarketQuery) {
   const [totals, categories, specialties, technologies, providersResult, workModesResult, employmentTypes, seniority, regions, countries, employers, quality, listings] = await Promise.all([
     pool.query(`SELECT count(*)::int AS active_listings,
       count(DISTINCT e.id)::int AS monitored_employers,
-      count(*) FILTER (WHERE l.job_category='software_engineering')::int AS engineering_openings,
+      count(*) FILTER (WHERE jsonb_array_length(COALESCE(l.engineering_specialties,'[]'::jsonb)) > 0)::int AS engineering_openings,
       count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote_openings,
       count(*) FILTER (WHERE l.employment_type ILIKE '%contract%' OR l.employment_type ILIKE '%freelance%')::int AS contract_openings,
       count(*) FILTER (WHERE l.compensation_min IS NOT NULL OR l.compensation_max IS NOT NULL)::int AS listings_with_compensation,
@@ -92,7 +92,7 @@ export async function getMarketSummary(query: MarketQuery) {
     pool.query(`SELECT COALESCE(NULLIF(l.seniority,''),'unknown') AS value, count(*)::int AS count FROM ${from} WHERE ${where} GROUP BY 1 ORDER BY count DESC, value LIMIT 25`, values),
     pool.query(`SELECT values.value, count(*)::int AS count FROM ${from} CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(l.location_signals->'regions','[]'::jsonb)) AS values(value) WHERE ${where} GROUP BY values.value ORDER BY count DESC, values.value LIMIT 25`, values),
     pool.query(`SELECT values.value, count(*)::int AS count FROM ${from} CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(NULLIF(l.location_signals->'countries','[]'::jsonb'), l.location_signals->'locations','[]'::jsonb)) AS values(value) WHERE values.value IN ('United States','Canada','Mexico','United Kingdom','Ireland','Germany','France','Netherlands','Spain','Portugal','Switzerland','Poland','Taiwan','Japan','South Korea','Singapore','Hong Kong','India','Australia','New Zealand','Israel','Brazil') AND ${where} GROUP BY values.value ORDER BY count DESC, values.value LIMIT 25`, values),
-    pool.query(`SELECT e.id AS employer_id, e.name AS value, count(*)::int AS listings, count(*) FILTER (WHERE l.job_category='software_engineering')::int AS engineering, count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote FROM ${from} WHERE ${where} GROUP BY e.id, e.name ORDER BY engineering DESC, listings DESC, e.name LIMIT 50`, values),
+    pool.query(`SELECT e.id AS employer_id, e.name AS value, count(*)::int AS listings, count(*) FILTER (WHERE jsonb_array_length(COALESCE(l.engineering_specialties,'[]'::jsonb)) > 0)::int AS engineering, count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote FROM ${from} WHERE ${where} GROUP BY e.id, e.name ORDER BY engineering DESC, listings DESC, e.name LIMIT 50`, values),
     pool.query(`SELECT count(*)::int AS listings,
       count(*) FILTER (WHERE l.classification_version >= $${values.length + 1})::int AS classified,
       count(*) FILTER (WHERE l.location_signals ? 'workEligibility')::int AS location_classified,

@@ -67,7 +67,7 @@ app.get('/api/market/drilldown', async (request, reply) => {
   const where = whereParts.join(' AND ');
   const from = `job_listings l JOIN job_boards b ON b.id=l.board_id JOIN employers e ON e.id=b.employer_id`;
   const [companies, total] = await Promise.all([
-    pool.query(`SELECT e.id AS employer_id, e.name AS employer_name, count(*)::int AS listings, count(*) FILTER (WHERE l.job_category='software_engineering')::int AS engineering, count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote, count(*) FILTER (WHERE l.first_observed_at >= now() - interval '7 days')::int AS new_last_7_days FROM ${from} WHERE ${where} GROUP BY e.id, e.name ORDER BY listings DESC, e.name LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]),
+    pool.query(`SELECT e.id AS employer_id, e.name AS employer_name, count(*)::int AS listings, count(*) FILTER (WHERE jsonb_array_length(COALESCE(l.engineering_specialties,'[]'::jsonb)) > 0)::int AS engineering, count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote, count(*) FILTER (WHERE l.first_observed_at >= now() - interval '7 days')::int AS new_last_7_days FROM ${from} WHERE ${where} GROUP BY e.id, e.name ORDER BY listings DESC, e.name LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]),
     pool.query(`SELECT count(DISTINCT e.id)::int AS count FROM ${from} WHERE ${where}`, values)
   ]);
   return { dimension: query.dimension, value: query.value, companies: companies.rows, total: total.rows[0].count, limit, offset };
