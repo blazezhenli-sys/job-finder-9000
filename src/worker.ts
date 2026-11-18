@@ -28,8 +28,10 @@ let locationSignalsReady: Promise<void> | undefined;
 export async function startWorkers() {
   if (started) return;
   started = true;
-  await migrate();
-  void startDeferredMigrations().catch((error) => console.error('deferred database migrations failed', error));
+  if (config.runMigrations) {
+    await migrate();
+    await startDeferredMigrations();
+  }
   await loadTechnologyTaxonomy();
   if (config.enablePosts) {
     const reclassified = await reclassifyExistingOpportunities(true);

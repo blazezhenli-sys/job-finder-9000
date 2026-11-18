@@ -1,14 +1,28 @@
 services:
+  migrate:
+    build: .
+    restart: "no"
+    env_file: .env
+    command: ["node", "dist/migrate-entry.js"]
+    environment:
+      DB_POOL_MAX: "2"
+    depends_on:
+      db:
+        condition: service_healthy
   app:
     build: .
     restart: unless-stopped
     env_file: .env
     command: ["node", "dist/server-entry.js"]
+    environment:
+      RUN_MIGRATIONS: "false"
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
   worker:
     build: .
     restart: unless-stopped
@@ -16,9 +30,12 @@ services:
     command: ["node", "dist/worker-entry.js"]
     environment:
       DB_POOL_MAX: "${WORKER_DB_POOL_MAX:-6}"
+      RUN_MIGRATIONS: "false"
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
   db:
     image: postgres:16-alpine
     restart: unless-stopped

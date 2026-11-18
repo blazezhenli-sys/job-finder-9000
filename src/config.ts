@@ -30,6 +30,7 @@ export const config = {
   port: num(process.env.PORT, 3000),
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://hiring:hiring@localhost:5432/hiring',
   databasePoolMax: Math.max(1, Math.floor(num(process.env.DB_POOL_MAX, 10))),
+  runMigrations: bool(process.env.RUN_MIGRATIONS, true),
   dashboardUsername: process.env.DASHBOARD_USERNAME ?? 'admin',
   dashboardPassword: process.env.DASHBOARD_PASSWORD ?? 'change-me',
   enablePosts: bool(process.env.ENABLE_POSTS, false),

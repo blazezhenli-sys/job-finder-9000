@@ -645,9 +645,11 @@ app.post('/api/dev/sample', async (_request, reply) => {
 app.get('/', async (_request, reply) => reply.sendFile('index.html'));
 
 export async function startServer() {
-  await migrate();
+  if (config.runMigrations) {
+    await migrate();
+    await startDeferredMigrations();
+  }
   await app.listen({ port: config.port, host: '0.0.0.0' });
-  void startDeferredMigrations().catch((error) => app.log.error({ error }, 'deferred database migrations failed'));
   return app;
 }
 
