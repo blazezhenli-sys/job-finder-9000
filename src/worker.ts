@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { migrate } from './db.js';
+import { migrate, startDeferredMigrations } from './db.js';
 import { deliverNotifications } from './notifications.js';
 import { removeExpired, processPost, reclassifyExistingOpportunities, updateHealth } from './pipeline-service.js';
 import { BlueskySource } from './sources/bluesky.js';
@@ -25,6 +25,7 @@ export async function startWorkers() {
   if (started) return;
   started = true;
   await migrate();
+  void startDeferredMigrations().catch((error) => console.error('deferred database migrations failed', error));
   await loadTechnologyTaxonomy();
   if (config.enablePosts) {
     const reclassified = await reclassifyExistingOpportunities(true);

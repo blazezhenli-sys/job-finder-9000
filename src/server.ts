@@ -2,7 +2,7 @@ import path from 'node:path';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { config } from './config.js';
-import { getPreferences, getRules, migrate, pool, setPreferences, withTransaction } from './db.js';
+import { getPreferences, getRules, migrate, pool, setPreferences, startDeferredMigrations, withTransaction } from './db.js';
 import { sendTestEmail } from './notifications.js';
 import { events, processPost } from './pipeline-service.js';
 import { createDiscoveryJob, getDiscoveryJobs } from './listings/discovery.js';
@@ -607,6 +607,7 @@ app.get('/', async (_request, reply) => reply.sendFile('index.html'));
 export async function startServer() {
   await migrate();
   await app.listen({ port: config.port, host: '0.0.0.0' });
+  void startDeferredMigrations().catch((error) => app.log.error({ error }, 'deferred database migrations failed'));
   return app;
 }
 
