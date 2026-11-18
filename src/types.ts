@@ -125,6 +125,10 @@ export interface JobBoard {
   employerId: string;
   employerName: string;
   companyWebsite: string;
+  identityDomain?: string;
+  identityNameSource?: string;
+  identityDomainSource?: string;
+  identityLastObservedAt?: string | null;
   provider: AtsProvider;
   boardIdentifier: string;
   boardUrl: string;

@@ -1,7 +1,9 @@
 import { config } from '../config.js';
-import { pool } from '../db.js';
+import { pool, withTransaction } from '../db.js';
 import { events } from '../pipeline-service.js';
 import type { AtsProvider } from '../types.js';
+import { resolveAtsBoardIdentity } from './identity.js';
+import { ensureEmployerForBoard } from './employer-resolution.js';
 
 export type DiscoveryProvider = Extract<AtsProvider, 'greenhouse' | 'ashby' | 'lever'>;
 type DiscoveryMode = 'full' | 'recent';
@@ -236,9 +238,20 @@ async function extractExistingOpportunityUrls(jobId: string, since?: Date) {
 }
 
 async function importCandidate(row: { id: string; provider: DiscoveryProvider; board_identifier: string; board_url: string; employer_name: string; discovery_source: string }) {
-  const employer = await pool.query(`INSERT INTO employers (name, website) VALUES ($1,$2) ON CONFLICT (name, website) DO UPDATE SET updated_at=now() RETURNING id`, [row.employer_name || row.board_identifier, row.board_url]);
-  const board = await pool.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (provider, board_identifier) DO UPDATE SET board_url=EXCLUDED.board_url, discovery_source=EXCLUDED.discovery_source, updated_at=now() RETURNING id`, [employer.rows[0].id, row.provider, row.board_identifier, row.board_url, `discovery:${row.discovery_source}`]);
-  await pool.query(`UPDATE listing_discovery_candidates SET status='imported', imported_board_id=$2, updated_at=now() WHERE id=$1`, [row.id, board.rows[0].id]);
+  const identity = await resolveAtsBoardIdentity(row.provider, row.board_identifier);
+  await withTransaction(async (client) => {
+    const existingBoard = await client.query('SELECT id, employer_id FROM job_boards WHERE provider=$1 AND board_identifier=$2', [row.provider, row.board_identifier]);
+    const employerId = await ensureEmployerForBoard(client, {
+      currentEmployerId: existingBoard.rows[0]?.employer_id ?? null,
+      provider: row.provider,
+      boardIdentifier: row.board_identifier,
+      identity,
+      provisionalName: row.employer_name || row.board_identifier
+    });
+    const board = await client.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source) VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (provider, board_identifier) DO UPDATE SET employer_id=$1, board_url=EXCLUDED.board_url, discovery_source=EXCLUDED.discovery_source, updated_at=now() RETURNING id`, [employerId, row.provider, row.board_identifier, row.board_url, `discovery:${row.discovery_source}`]);
+    await client.query(`UPDATE listing_discovery_candidates SET status='imported', imported_board_id=$2, updated_at=now() WHERE id=$1`, [row.id, board.rows[0].id]);
+  });
 }
 
 async function validateCandidate(row: { id: string; provider: DiscoveryProvider; board_identifier: string; board_url: string; employer_name: string; discovery_source: string; validation_attempts: number }) {
