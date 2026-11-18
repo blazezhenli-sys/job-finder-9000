@@ -9,6 +9,7 @@ import { createDiscoveryJob, getDiscoveryJobs } from './listings/discovery.js';
 import { calculateProspectScore, engineeringSpecialtyLabels } from './listings/company.js';
 import { getMarketSummary, type MarketQuery } from './listings/market.js';
 import { jobCategoryLabels } from './listings/classification.js';
+import { getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 
 const app = Fastify({ logger: true });
@@ -39,6 +40,34 @@ app.get('/api/health', async (_request, reply) => {
 app.get('/api/market/summary', async (request) => {
   const query = request.query as MarketQuery & { limit?: string };
   return { ...(await getMarketSummary(query)), labels: { categories: jobCategoryLabels } };
+});
+
+app.get('/api/market/trends', async (request) => {
+  const query = request.query as { from?: string; to?: string; cohort?: string; dimension?: string };
+  const to = query.to && !Number.isNaN(Date.parse(query.to)) ? query.to : new Date().toISOString().slice(0, 10);
+  const from = query.from && !Number.isNaN(Date.parse(query.from)) ? query.from : new Date(Date.now() - 28 * 86400000).toISOString().slice(0, 10);
+  return getMarketTrends(from, to, query.cohort, query.dimension);
+});
+
+app.get('/api/market/signals', async (request) => {
+  const query = request.query as { limit?: string };
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
+  const result = await pool.query(`SELECT s.*, e.name AS employer_name FROM market_signals s LEFT JOIN employers e ON e.id=s.employer_id WHERE s.status='active' ORDER BY s.last_seen_at DESC LIMIT $1`, [limit]);
+  return { signals: result.rows };
+});
+
+app.get('/api/market/compare', async (request, reply) => {
+  const query = request.query as { a?: string; b?: string };
+  let segmentA: MarketQuery = {};
+  let segmentB: MarketQuery = {};
+  try {
+    if (query.a) segmentA = JSON.parse(query.a) as MarketQuery;
+    if (query.b) segmentB = JSON.parse(query.b) as MarketQuery;
+  } catch {
+    return reply.code(400).send({ error: 'Segments must be valid JSON filter objects' });
+  }
+  const [a, b] = await Promise.all([getMarketSummary({ ...segmentA, active: segmentA.active ?? 'true', limit: '1' } as MarketQuery), getMarketSummary({ ...segmentB, active: segmentB.active ?? 'true', limit: '1' } as MarketQuery)]);
+  return { segments: { a: { filters: segmentA, totals: a.totals }, b: { filters: segmentB, totals: b.totals } } };
 });
 
 app.get('/api/opportunities', async (request) => {

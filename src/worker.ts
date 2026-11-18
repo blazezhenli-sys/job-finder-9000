@@ -12,11 +12,13 @@ import { startListingDiscovery } from './listings/discovery.js';
 import { backfillListingMetadata } from './listings/company.js';
 import { backfillListingCompensation } from './listings/salary.js';
 import { backfillListingClassification } from './listings/classification.js';
+import { detectMarketSignals, runDailyMarketSnapshot } from './listings/analytics.js';
 
 let started = false;
 const sources: SourceAdapter[] = [];
 let listingTimer: NodeJS.Timeout | undefined;
 let discoveryTimer: NodeJS.Timeout | undefined;
+let analyticsTimer: NodeJS.Timeout | undefined;
 
 export async function startWorkers() {
   if (started) return;
@@ -40,7 +42,12 @@ export async function startWorkers() {
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));
   if (config.enableListings) void backfillListingClassification().catch((error) => console.error('listing classification backfill failed', error));
+  if (config.enableListings) {
+    const runAnalytics = async () => { await runDailyMarketSnapshot(); await detectMarketSignals(); };
+    void runAnalytics().catch((error) => console.error('market analytics failed', error));
+    analyticsTimer = setInterval(() => void runAnalytics().catch((error) => console.error('market analytics failed', error)), 60 * 60 * 1000);
+  }
   void deliverNotifications();
 }
 
-export function stopWorkers() { for (const source of sources) source.stop(); if (listingTimer) clearInterval(listingTimer); if (discoveryTimer) clearInterval(discoveryTimer); }
+export function stopWorkers() { for (const source of sources) source.stop(); if (listingTimer) clearInterval(listingTimer); if (discoveryTimer) clearInterval(discoveryTimer); if (analyticsTimer) clearInterval(analyticsTimer); }
