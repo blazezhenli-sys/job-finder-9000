@@ -54,8 +54,8 @@ describe('hiring signal pipeline', () => {
     const analysis = analyzePost(post, rules, relevancePreferences);
     expect(notificationEligible(analysis, true, { ...relevancePreferences, notifyRecovered: false })).toBe(false);
     expect(notificationEligible(analysis, true, { ...relevancePreferences, notifyRecovered: true })).toBe(true);
-    expect(notificationEligible({ ...analysis, personalRelevance: 20, score: 20 }, false, { ...defaultPreferences, notifyRecovered: true })).toBe(false);
-    expect(notificationEligible({ ...analysis, personalRelevance: 90, score: 90 }, false, { ...defaultPreferences, minimumNotificationScore: 95 })).toBe(false);
+    expect(notificationEligible({ ...analysis, signalQuality: 20 }, false, { ...defaultPreferences, notifyRecovered: true })).toBe(false);
+    expect(notificationEligible({ ...analysis, personalRelevance: 0, score: 0 }, false, { ...defaultPreferences, minimumNotificationSignalQuality: 101 })).toBe(false);
   });
   it('suppresses templated job-board advertisements while retaining them for review', () => {
     const result = analyzePost({ ...post, text: '🚀 New Remote Job Alert! Position: Software Engineer Company: Example Corp Location: USA Apply now: https://jobs.example.com/1 #RemoteJobs #Hiring' }, rules, defaultPreferences);

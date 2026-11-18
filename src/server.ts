@@ -176,16 +176,15 @@ app.get('/api/market/compare', async (request, reply) => {
 });
 
 app.get('/api/opportunities', async (request) => {
-  const query = request.query as { source?: string; status?: string; sort?: string; minScore?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
+  const query = request.query as { source?: string; status?: string; sort?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
   const conditions: string[] = [];
   const values: unknown[] = [];
   if (query.source && ['bluesky', 'hacker_news', 'mastodon', 'reddit'].includes(query.source)) { values.push(query.source); conditions.push(`source = $${values.length}`); }
   if (query.status && ['unread', 'interesting', 'dismissed', 'contacted'].includes(query.status)) { values.push(query.status); conditions.push(`status = $${values.length}`); }
-  if (query.minScore && Number.isFinite(Number(query.minScore))) { values.push(Number(query.minScore)); conditions.push(`score >= $${values.length}`); }
   if (query.minQuality && Number.isFinite(Number(query.minQuality))) { values.push(Number(query.minQuality)); conditions.push(`signal_quality >= $${values.length}`); }
   if (query.signalCategory && ['direct_hiring', 'service_request', 'employee_referral', 'firsthand_announcement', 'aggregated_listing', 'uncertain'].includes(query.signalCategory)) { values.push(query.signalCategory); conditions.push(`signal_category = $${values.length}`); }
   if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`location_signals->>'workMode' = $${values.length}`); }
-  const sort = query.sort === 'score' ? 'personal_relevance DESC, signal_quality DESC, published_at DESC' : query.sort === 'quality' ? 'signal_quality DESC, personal_relevance DESC, published_at DESC' : query.sort === 'published' ? 'published_at DESC' : 'first_seen_at DESC';
+  const sort = query.sort === 'quality' ? 'signal_quality DESC, published_at DESC' : query.sort === 'published' ? 'published_at DESC' : 'first_seen_at DESC';
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
   const offset = Math.max(0, Number(query.offset) || 0);
   values.push(limit, offset);
@@ -564,10 +563,9 @@ app.get('/api/settings', async () => {
 app.put('/api/settings', async (request, reply) => {
   const body = request.body as Record<string, unknown>;
   const current = await getPreferences();
-  const allowed = ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'notificationsEnabled', 'notifyRecovered', 'listingsNotificationsEnabled', 'minimumListingRelevance', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'heuristics'];
+  const allowed = ['notificationsEnabled', 'notifyRecovered', 'listingsNotificationsEnabled'];
   const changes: Record<string, unknown> = {};
   for (const key of allowed) if (body[key] !== undefined) changes[key] = body[key];
-  for (const key of ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumListingRelevance']) if (changes[key] !== undefined && (!Number.isFinite(Number(changes[key])) || Number(changes[key]) < 0 || Number(changes[key]) > 100)) return reply.code(400).send({ error: `${key} must be 0-100` });
   return { preferences: await setPreferences({ ...current, ...changes }) };
 });
 

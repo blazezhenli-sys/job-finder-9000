@@ -151,11 +151,7 @@ export async function getPreferences(): Promise<Preferences> {
   delete saved.locationProfile;
   delete saved.minimumNotificationLocationFitScore;
   delete saved.minimumListingLocationFitScore;
-  if (saved.heuristics) {
-    saved.heuristics = { ...saved.heuristics };
-    delete saved.heuristics.softwareRequestTerms;
-    delete saved.heuristics.softwareEvidenceTerms;
-  }
+  for (const key of ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumListingRelevance', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'heuristics']) delete saved[key];
   return {
     ...defaultPreferences,
     ...saved,

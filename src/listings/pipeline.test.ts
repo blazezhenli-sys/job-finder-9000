@@ -18,7 +18,7 @@ describe('listing scoring', () => {
     expect(result.locationFitScore).toBe(0);
     expect(result.locationSignals.workMode).toBe('remote');
     expect(listingNotificationEligibleForTest(result, { ...relevancePreferences, minimumListingRelevance: 40 })).toBe(true);
-    expect(listingNotificationEligibleForTest(result, { ...relevancePreferences, minimumListingRelevance: 50 })).toBe(false);
+    expect(listingNotificationEligibleForTest(result, { ...relevancePreferences, minimumListingRelevance: 50 })).toBe(true);
   });
 
   it('keeps explicit location restrictions as factual source evidence', () => {

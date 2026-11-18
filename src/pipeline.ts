@@ -200,7 +200,7 @@ export function analyzePost(post: NormalizedPost, rules: DetectionRule[], prefer
 }
 
 export function notificationEligible(analysis: Analysis, recovered: boolean, preferences: Preferences): boolean {
-  if (!preferences.notificationsEnabled || analysis.suppressed || analysis.score < preferences.minimumNotificationScore || analysis.signalQuality < preferences.minimumNotificationSignalQuality || analysis.personalRelevance < preferences.minimumNotificationPersonalRelevance) return false;
+  if (!preferences.notificationsEnabled || analysis.suppressed || analysis.signalQuality < preferences.minimumNotificationSignalQuality) return false;
   if (recovered && !preferences.notifyRecovered) return false;
   return true;
 }

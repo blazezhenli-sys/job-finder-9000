@@ -49,8 +49,7 @@ async function ensureAggregatorBoards() {
 }
 
 function notificationEligible(analysis: ReturnType<typeof analyzeListing>, preferences: Awaited<ReturnType<typeof getPreferences>>) {
-  return preferences.listingsNotificationsEnabled
-    && analysis.personalRelevance >= preferences.minimumListingRelevance;
+  return preferences.listingsNotificationsEnabled;
 }
 
 type PollTaskResult = { status: 'completed' | 'failed'; listingsSeen: number; newListings: number; error?: string };
