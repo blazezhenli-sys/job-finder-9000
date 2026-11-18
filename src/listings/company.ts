@@ -1,4 +1,4 @@
-import { pool } from '../db.js';
+import { pool, withTransaction } from '../db.js';
 export { engineeringSpecialtyLabels, classifyEngineeringSpecialties, extractListingTechnologies } from './classification.js';
 import { classifyEngineeringSpecialties, extractListingTechnologies } from './classification.js';
 import { listingLocationSignals } from './pipeline.js';
@@ -43,29 +43,45 @@ export async function backfillListingMetadata() {
 export async function backfillListingLocationSignals() {
   const marker = await pool.query(`SELECT 1 FROM app_settings WHERE key='listing_location_signals_backfill_v2'`);
   if (marker.rows[0]) return;
-  let processed = 0;
-  let lastId: string | null = null;
+  const progressResult = await pool.query<{ value: { lastId?: string; processed?: number } }>(`SELECT value FROM app_settings WHERE key='listing_location_signals_backfill_v2_progress'`);
+  let processed = Number(progressResult.rows[0]?.value?.processed || 0);
+  let lastId: string | null = progressResult.rows[0]?.value?.lastId || null;
+  const batchSize = 250;
   while (true) {
     type LocationBackfillRow = { id: string; location: string; secondary_locations: string[]; geographic_restrictions: string[]; remote_mode: string; description: string };
-    const locationRows: { rows: LocationBackfillRow[] } = await pool.query(`SELECT id, location, secondary_locations, geographic_restrictions, remote_mode, description
-      FROM job_listings WHERE ($1::uuid IS NULL OR id > $1::uuid) ORDER BY id LIMIT 500`, [lastId]);
-    if (!locationRows.rows.length) break;
-    const updates = locationRows.rows.map((row) => ({
-      id: row.id,
-      location_signals: listingLocationSignals({
-        location: row.location,
-        secondaryLocations: row.secondary_locations ?? [],
-        geographicRestrictions: row.geographic_restrictions ?? [],
-        remoteMode: row.remote_mode as 'remote' | 'hybrid' | 'onsite' | 'unknown',
-        description: row.description ?? ''
-      })
-    }));
-    await pool.query(`UPDATE job_listings AS listing
-      SET location_signals=updates.location_signals, updated_at=now()
-      FROM jsonb_to_recordset($1::jsonb) AS updates(id uuid, location_signals jsonb)
-      WHERE listing.id=updates.id`, [JSON.stringify(updates)]);
-    processed += locationRows.rows.length;
-    lastId = locationRows.rows.at(-1)?.id ?? lastId;
+    let batch: { count: number; lastId: string } | null = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        batch = await withTransaction(async (client) => {
+          const locationRows = await client.query<LocationBackfillRow>(`SELECT id, location, secondary_locations, geographic_restrictions, remote_mode, description
+            FROM job_listings WHERE ($1::uuid IS NULL OR id > $1::uuid) ORDER BY id LIMIT ${batchSize} FOR UPDATE`, [lastId]);
+          if (!locationRows.rows.length) return null;
+          const updates = locationRows.rows.map((row) => ({
+            id: row.id,
+            location_signals: listingLocationSignals({
+              location: row.location,
+              secondaryLocations: row.secondary_locations ?? [],
+              geographicRestrictions: row.geographic_restrictions ?? [],
+              remoteMode: row.remote_mode as 'remote' | 'hybrid' | 'onsite' | 'unknown',
+              description: row.description ?? ''
+            })
+          }));
+          await client.query(`UPDATE job_listings AS listing
+            SET location_signals=updates.location_signals, updated_at=now()
+            FROM jsonb_to_recordset($1::jsonb) AS updates(id uuid, location_signals jsonb)
+            WHERE listing.id=updates.id`, [JSON.stringify(updates)]);
+          return { count: locationRows.rows.length, lastId: locationRows.rows.at(-1)!.id };
+        });
+        break;
+      } catch (error) {
+        if ((error as { code?: string }).code !== '40P01' || attempt === 4) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    if (!batch) break;
+    processed += batch.count;
+    lastId = batch.lastId;
+    await pool.query(`INSERT INTO app_settings (key, value, updated_at) VALUES ('listing_location_signals_backfill_v2_progress', $1, now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`, [JSON.stringify({ lastId, processed })]);
     if (processed % 5_000 === 0) console.info(`Listing location backfill: ${processed} listings processed`);
   }
   await pool.query(`INSERT INTO app_settings (key, value) VALUES ('listing_location_signals_backfill_v2', $1) ON CONFLICT (key) DO NOTHING`, [JSON.stringify({ completed: true, processed })]);
