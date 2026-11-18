@@ -147,7 +147,18 @@ export async function backfillListingClassification() {
       ORDER BY id
       LIMIT 500`, [LISTING_CLASSIFICATION_VERSION]);
     if (!result.rows.length) break;
-    const updates = result.rows.map((row) => ({ id: row.id, ...classifyListing(row) }));
+    const updates = result.rows.map((row) => {
+      const classification = classifyListing(row);
+      return {
+        id: row.id,
+        job_category: classification.jobCategory,
+        primary_specialty: classification.primarySpecialty,
+        engineering_specialties: classification.engineeringSpecialties,
+        technologies: classification.technologies,
+        classification_version: classification.version,
+        classification_method: classification.method
+      };
+    });
     await pool.query(`UPDATE job_listings AS listing
       SET job_category=updates.job_category,
           primary_specialty=updates.primary_specialty,
