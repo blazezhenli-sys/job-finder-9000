@@ -121,3 +121,59 @@ export async function getMarketSummary(query: MarketQuery) {
     pagination: { limit, offset, total: Number(totals.rows[0]?.active_listings || 0) }
   };
 }
+
+export async function getMarketCurrent(query: MarketQuery, dimension = 'category') {
+  const safeDimension = ['category', 'specialty', 'technology', 'region', 'country'].includes(dimension) ? dimension : 'category';
+  const values: unknown[] = [];
+  const where = marketWhere(query, values);
+  const from = `job_listings l JOIN job_boards b ON b.id=l.board_id JOIN employers e ON e.id=b.employer_id`;
+  const dimensions: Record<string, { value: string; join: string }> = {
+    category: { value: `COALESCE(NULLIF(l.job_category,''),'unknown')`, join: '' },
+    specialty: { value: 'facet.value', join: `CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(l.engineering_specialties,'[]'::jsonb)) AS facet(value)` },
+    technology: { value: 'facet.value', join: `CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(l.technologies,'[]'::jsonb)) AS facet(value)` },
+    region: { value: `COALESCE(facet.value,'unknown')`, join: `LEFT JOIN LATERAL jsonb_array_elements_text(COALESCE(l.location_signals->'regions','[]'::jsonb)) AS facet(value) ON TRUE` },
+    country: { value: `COALESCE(facet.value,'unknown')`, join: `LEFT JOIN LATERAL jsonb_array_elements_text(COALESCE(l.location_signals->'countries','[]'::jsonb)) AS facet(value) ON TRUE` }
+  };
+  const selected = dimensions[safeDimension];
+  const [result, totals] = await Promise.all([
+    pool.query(`SELECT ${selected.value} AS dimension_value,
+        count(*)::int AS active_listings, count(DISTINCT e.id)::int AS employers,
+        count(*) FILTER (WHERE l.first_observed_at >= now() - interval '7 days')::int AS new_listings,
+        count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote_listings,
+        count(*) FILTER (WHERE l.employment_type ILIKE '%contract%' OR l.employment_type ILIKE '%freelance%')::int AS contract_listings
+      FROM ${from} ${selected.join} WHERE ${where} GROUP BY ${selected.value} ORDER BY active_listings DESC, dimension_value`, values),
+    pool.query(`SELECT count(*)::int AS active_listings, count(DISTINCT e.id)::int AS employers,
+        count(*) FILTER (WHERE l.first_observed_at >= now() - interval '7 days')::int AS new_listings,
+        count(*) FILTER (WHERE l.remote_mode='remote')::int AS remote_listings,
+        count(*) FILTER (WHERE l.employment_type ILIKE '%contract%' OR l.employment_type ILIKE '%freelance%')::int AS contract_listings
+      FROM ${from} WHERE ${where}`, values)
+  ]);
+  const snapshotDate = new Date().toISOString().slice(0, 10);
+  const total = Number(totals.rows[0]?.active_listings || 0);
+  const rows = result.rows.map((row) => ({
+    snapshot_date: snapshotDate,
+    dimension_value: row.dimension_value,
+    active_listings: Number(row.active_listings || 0),
+    employers: Number(row.employers || 0),
+    new_listings: Number(row.new_listings || 0),
+    removed_listings: 0,
+    remote_listings: Number(row.remote_listings || 0),
+    contract_listings: Number(row.contract_listings || 0),
+    active_share: total ? Number(row.active_listings || 0) / total : 0,
+    new_share: Number(totals.rows[0]?.new_listings || 0) ? Number(row.new_listings || 0) / Number(totals.rows[0].new_listings) : 0,
+    share_delta: 0,
+    active_delta: 0,
+    prior_active_listings: 0
+  }));
+  return {
+    from: snapshotDate, to: snapshotDate, cohort: 'current', dimension: safeDimension, granularity: 'day',
+    summary: {
+      active_listings: total, new_listings: Number(totals.rows[0]?.new_listings || 0), removed_listings: 0,
+      employers: Number(totals.rows[0]?.employers || 0), remote_listings: Number(totals.rows[0]?.remote_listings || 0), contract_listings: Number(totals.rows[0]?.contract_listings || 0),
+      remote_share: total ? Number(totals.rows[0]?.remote_listings || 0) / total : 0, contract_share: total ? Number(totals.rows[0]?.contract_listings || 0) / total : 0,
+      prior_active_listings: 0, prior_new_listings: 0, active_delta: 0
+    },
+    coverage: { current: null, previous: null, snapshots: 1, monitored_boards: 0, stable_boards: 0, monitored_employers: Number(totals.rows[0]?.employers || 0), stable_employers: 0, newly_discovered_boards: 0, coverage_note: 'Current filtered view; historical snapshots are not filtered.' },
+    series: rows, total_series: [{ snapshot_date: snapshotDate, active_listings: total }], rankings: rows, signals: []
+  };
+}

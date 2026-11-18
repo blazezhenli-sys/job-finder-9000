@@ -7,7 +7,7 @@ import { sendTestEmail } from './notifications.js';
 import { events, processPost } from './pipeline-service.js';
 import { createDiscoveryJob, getDiscoveryJobs } from './listings/discovery.js';
 import { calculateProspectScore, engineeringSpecialtyLabels } from './listings/company.js';
-import { getMarketSummary, marketWhere, type MarketQuery } from './listings/market.js';
+import { getMarketCurrent, getMarketSummary, marketWhere, type MarketQuery } from './listings/market.js';
 import { jobCategoryLabels, LISTING_CLASSIFICATION_VERSION, loadTechnologyTaxonomy } from './listings/classification.js';
 import { getMarketDashboard, getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
@@ -40,6 +40,11 @@ app.get('/api/health', async (_request, reply) => {
 app.get('/api/market/summary', async (request) => {
   const query = request.query as MarketQuery & { limit?: string };
   return { ...(await getMarketSummary(query)), labels: { categories: jobCategoryLabels } };
+});
+
+app.get('/api/market/current', async (request) => {
+  const query = request.query as MarketQuery & { dimension?: string };
+  return getMarketCurrent(query, query.dimension);
 });
 
 app.get('/api/market/dashboard', async (request) => {

@@ -9,7 +9,8 @@
     dimension: 'category',
     mode: 'both',
     focus: '',
-    evidencePage: 0
+    evidencePage: 0,
+    filterCategory: '', filterSpecialty: '', filterTechnology: '', filterRegion: '', filterCountry: '', filterProvider: '', filterWorkMode: '', filterEmploymentType: ''
   };
 
   const colors = ['#168052', '#3f78b5', '#d97939', '#8b5fbf', '#bd4d68', '#4f9b92', '#8a6d3b', '#71807a'];
@@ -30,29 +31,38 @@
     state.dimension = query.get('marketDimension') || state.dimension;
     state.mode = query.get('marketMode') || state.mode;
     state.focus = query.get('marketFocus') || '';
+    state.filterCategory = query.get('marketFilterCategory') || '';
+    state.filterSpecialty = query.get('marketFilterSpecialty') || '';
+    state.filterTechnology = query.get('marketFilterTechnology') || '';
+    state.filterRegion = query.get('marketFilterRegion') || '';
+    state.filterCountry = query.get('marketFilterCountry') || '';
+    state.filterProvider = query.get('marketFilterProvider') || '';
+    state.filterWorkMode = query.get('marketFilterWorkMode') || '';
+    state.filterEmploymentType = query.get('marketFilterEmploymentType') || '';
   }
   function persist() {
     const query = new URLSearchParams(location.search);
-    [['marketWindow', state.windowDays], ['marketCohort', state.cohort], ['marketGranularity', state.granularity], ['marketDimension', state.dimension], ['marketMode', state.mode], ['marketFocus', state.focus]].forEach(([key, value]) => value ? query.set(key, String(value)) : query.delete(key));
+    [['marketWindow', state.windowDays], ['marketCohort', state.cohort], ['marketGranularity', state.granularity], ['marketDimension', state.dimension], ['marketMode', state.mode], ['marketFocus', state.focus], ['marketFilterCategory', state.filterCategory], ['marketFilterSpecialty', state.filterSpecialty], ['marketFilterTechnology', state.filterTechnology], ['marketFilterRegion', state.filterRegion], ['marketFilterCountry', state.filterCountry], ['marketFilterProvider', state.filterProvider], ['marketFilterWorkMode', state.filterWorkMode], ['marketFilterEmploymentType', state.filterEmploymentType]].forEach(([key, value]) => value ? query.set(key, String(value)) : query.delete(key));
     history.replaceState(null, '', location.pathname + (query.toString() ? '?' + query.toString() : ''));
   }
   function dashboardQuery() {
     return new URLSearchParams({ from: fromDate(state.windowDays), to: today(), cohort: state.cohort, dimension: state.dimension, granularity: state.granularity });
   }
+  function currentQuery() {
+    const query = new URLSearchParams({ dimension: state.dimension, active: 'true' });
+    [['category', state.filterCategory], ['specialty', state.filterSpecialty], ['technology', state.filterTechnology], ['region', state.filterRegion], ['country', state.filterCountry], ['provider', state.filterProvider], ['workMode', state.filterWorkMode], ['employmentType', state.filterEmploymentType]].forEach(([key, value]) => { if (value) query.set(key, value); });
+    return query;
+  }
+  function hasCurrentFilters() { return Boolean(state.filterCategory || state.filterSpecialty || state.filterTechnology || state.filterRegion || state.filterCountry || state.filterProvider || state.filterWorkMode || state.filterEmploymentType); }
   function evidenceQuery(value) {
     const query = new URLSearchParams({ dimension: state.dimension, value, from: fromDate(state.windowDays), to: today(), limit: '25', offset: String(state.evidencePage * 25) });
-    const provider = document.querySelector('#market-dashboard-provider')?.value;
-    const workMode = document.querySelector('#market-dashboard-work-mode')?.value;
-    const employment = document.querySelector('#market-dashboard-employment')?.value;
-    if (provider) query.set('provider', provider);
-    if (workMode) query.set('workMode', workMode);
-    if (employment) query.set('employmentType', employment);
+    [['category', state.filterCategory], ['specialty', state.filterSpecialty], ['technology', state.filterTechnology], ['region', state.filterRegion], ['country', state.filterCountry], ['provider', state.filterProvider], ['workMode', state.filterWorkMode], ['employmentType', state.filterEmploymentType]].forEach(([key, value]) => { if (value) query.set(key, value); });
     return query;
   }
 
   view.innerHTML = `
     <div class="page-heading"><div><p class="eyebrow">MARKET OBSERVABILITY</p><h1>Market dashboard</h1><p class="subtle">See where observed hiring is concentrated, how sector share changes, and which companies support the movement.</p></div><div class="heading-actions"><button id="market-dashboard-refresh" class="button secondary" type="button">Refresh</button></div></div>
-    <div class="market-dashboard-controls"><div class="filters"><label>Window<select id="market-dashboard-window"><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option></select></label><label>Cohort<select id="market-dashboard-cohort"><option value="stable_28d">Stable 28-day cohort</option><option value="all">All observed boards</option></select></label><label>Granularity<select id="market-dashboard-granularity"><option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option></select></label><label>Dimension<select id="market-dashboard-dimension"><option value="category">Job categories</option><option value="specialty">Engineering specialties</option><option value="technology">Technologies</option><option value="region">Regions</option><option value="country">Countries</option></select></label><label>Display<select id="market-dashboard-mode"><option value="both">Volume + share</option><option value="volume">Volume</option><option value="share">Share</option></select></label></div><button id="market-dashboard-advanced-toggle" class="button secondary" type="button">Evidence filters</button></div>
+    <div class="market-dashboard-controls"><div class="filters"><label>Window<select id="market-dashboard-window"><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option></select></label><label>Cohort<select id="market-dashboard-cohort"><option value="stable_28d">Stable 28-day cohort</option><option value="all">All observed boards</option></select></label><label>Granularity<select id="market-dashboard-granularity"><option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option></select></label><label>Dimension<select id="market-dashboard-dimension"><option value="category">Job categories</option><option value="specialty">Engineering specialties</option><option value="technology">Technologies</option><option value="region">Regions</option><option value="country">Countries</option></select></label><label>Display<select id="market-dashboard-mode"><option value="both">Volume + share</option><option value="volume">Volume</option><option value="share">Share</option></select></label></div><button id="market-dashboard-advanced-toggle" class="button secondary" type="button">Filters</button></div>
     <div id="market-dashboard-advanced" class="market-dashboard-advanced hidden"><span class="subtle">These filters affect evidence drill-downs, not historical cohort calculations.</span><select id="market-dashboard-provider"><option value="">Any ATS provider</option><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever</option><option value="remotive">Remotive</option><option value="adzuna">Adzuna</option></select><select id="market-dashboard-work-mode"><option value="">Any work mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option><option value="unknown">Unknown</option></select><select id="market-dashboard-employment"><option value="">Any employment type</option><option value="full">Full-time</option><option value="contract">Contract</option><option value="freelance">Freelance</option></select></div>
     <div id="market-dashboard-stats" class="stats market-dashboard-stats"></div>
     <div id="market-dashboard-coverage" class="market-dashboard-coverage subtle"></div>
@@ -67,12 +77,29 @@
     <aside id="market-evidence" class="market-evidence-panel hidden"><div class="company-panel-heading"><div><p class="eyebrow">EVIDENCE</p><h2 id="market-evidence-title">Supporting data</h2><p id="market-evidence-note" class="subtle"></p></div><div class="heading-actions"><button id="market-evidence-open-listings" class="button primary hidden" type="button">Open matching listings</button><button id="market-evidence-close" class="button secondary" type="button">Close</button></div></div><div id="market-evidence-companies"></div><div id="market-evidence-listings"></div><div id="market-evidence-pagination" class="pagination"></div></aside>
   `;
 
+  function ensureDashboardFilterControls() {
+    const advanced = document.querySelector('#market-dashboard-advanced');
+    if (!advanced || document.querySelector('#market-dashboard-filter-category')) return;
+    advanced.insertAdjacentHTML('beforeend', '<select id="market-dashboard-filter-category"><option value="">Any category</option></select><select id="market-dashboard-filter-specialty"><option value="">Any specialty</option></select><select id="market-dashboard-filter-technology"><option value="">Any technology</option></select><select id="market-dashboard-filter-region"><option value="">Any region</option></select><select id="market-dashboard-filter-country"><option value="">Any country</option></select>');
+  }
+  ensureDashboardFilterControls();
+  const filterNote = document.querySelector('#market-dashboard-advanced .subtle');
+  if (filterNote) filterNote.textContent = 'Selecting filters switches the charts to a current filtered view; unfiltered charts use historical snapshots.';
+
   function setControls() {
     document.querySelector('#market-dashboard-window').value = String(state.windowDays);
     document.querySelector('#market-dashboard-cohort').value = state.cohort;
     document.querySelector('#market-dashboard-granularity').value = state.granularity;
     document.querySelector('#market-dashboard-dimension').value = state.dimension;
     document.querySelector('#market-dashboard-mode').value = state.mode;
+    document.querySelector('#market-dashboard-filter-category').value = state.filterCategory;
+    document.querySelector('#market-dashboard-filter-specialty').value = state.filterSpecialty;
+    document.querySelector('#market-dashboard-filter-technology').value = state.filterTechnology;
+    document.querySelector('#market-dashboard-filter-region').value = state.filterRegion;
+    document.querySelector('#market-dashboard-filter-country').value = state.filterCountry;
+    document.querySelector('#market-dashboard-provider').value = state.filterProvider;
+    document.querySelector('#market-dashboard-work-mode').value = state.filterWorkMode;
+    document.querySelector('#market-dashboard-employment').value = state.filterEmploymentType;
   }
 
   function statMarkup(labelText, value, detail = '') {
@@ -127,9 +154,10 @@
         return cumulative[index] - value;
       });
       const path = 'M ' + grouped.rows.map((entry, index) => x(index) + ' ' + tops[index]).join(' L ') + ' L ' + grouped.rows.map((entry, index) => x(grouped.rows.length - 1 - index) + ' ' + y(bottomValues[grouped.rows.length - 1 - index])).join(' L ') + ' Z';
+      const sector = esc(key);
       const shape = grouped.rows.length === 1
-        ? '<rect x="' + left + '" y="' + tops[0] + '" width="' + plotWidth + '" height="' + Math.max(2, y(bottomValues[0]) - tops[0]) + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">'
-        : '<path d="' + path + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">';
+        ? '<rect class="chart-sector" data-sector="' + sector + '" x="' + left + '" y="' + tops[0] + '" width="' + plotWidth + '" height="' + Math.max(2, y(bottomValues[0]) - tops[0]) + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">'
+        : '<path class="chart-sector" data-sector="' + sector + '" d="' + path + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">';
       return shape + '<title>' + esc(label(key === '__remaining' ? 'Remaining' : key)) + '</title>' + (grouped.rows.length === 1 ? '</rect>' : '</path>');
     }).join('') : '';
     const totalPoints = grouped.rows.map((entry, index) => x(index) + ' ' + y(observedTotal(entry))).join(' L ');
@@ -142,7 +170,7 @@
         const raw = valuesFor(entry, key);
         const value = field === 'share' ? (entry.total ? raw / entry.total : 0) : raw;
         stack += value;
-        return '<circle cx="' + x(index) + '" cy="' + y(stack) + '" r="7" class="chart-point" data-tooltip="' + esc(String(entry.period).slice(0, 10) + ' · ' + label(key === '__remaining' ? 'Remaining' : key) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString())) + '"><title>' + esc(String(entry.period).slice(0, 10)) + ' · ' + esc(label(key === '__remaining' ? 'Remaining' : key)) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()) + '</title></circle>';
+        return '<circle cx="' + x(index) + '" cy="' + y(stack) + '" r="7" class="chart-point" data-sector="' + esc(key) + '" data-tooltip="' + esc(String(entry.period).slice(0, 10) + ' · ' + label(key === '__remaining' ? 'Remaining' : key) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString())) + '"><title>' + esc(String(entry.period).slice(0, 10)) + ' · ' + esc(label(key === '__remaining' ? 'Remaining' : key)) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()) + '</title></circle>';
       }).join('');
     }).join('');
     const periodHoverZones = grouped.rows.map((entry, index) => {
@@ -202,11 +230,26 @@
   }
 
   function openListingsForDimension(value) {
-    const filterIds = ['#listing-category', '#listing-specialty', '#listing-region', '#listing-country', '#listing-technology'];
     const filterId = { category: '#listing-category', specialty: '#listing-specialty', technology: '#listing-technology', region: '#listing-region', country: '#listing-country' }[state.dimension];
     if (!filterId || value === '__remaining' || typeof showView !== 'function' || typeof loadListings !== 'function') return;
+    const values = {
+      '#listing-category': state.filterCategory,
+      '#listing-specialty': state.filterSpecialty,
+      '#listing-technology': state.filterTechnology,
+      '#listing-region': state.filterRegion,
+      '#listing-country': state.filterCountry,
+      '#listing-provider': state.filterProvider,
+      '#listing-work-mode': state.filterWorkMode,
+      '#listing-employment-type': state.filterEmploymentType
+    };
+    values[filterId] = value;
+    Object.entries(values).forEach(([id, selectedValue]) => {
+      const select = document.querySelector(id);
+      if (!select) return;
+      if (selectedValue && ![...select.options].some((option) => option.value === selectedValue)) select.add(new Option(label(selectedValue), selectedValue));
+      select.value = selectedValue || '';
+    });
     showView('listings');
-    filterIds.forEach((id) => { const select = document.querySelector(id); if (select) select.value = ''; });
     const select = document.querySelector(filterId);
     if (!select) return;
     if (![...select.options].some((option) => option.value === value)) select.add(new Option(label(value), value));
@@ -228,28 +271,34 @@
     document.querySelectorAll('.market-evidence-company').forEach((link) => link.addEventListener('click', (event) => { event.preventDefault(); openCompany(link.dataset.companyId).catch(console.error); }));
   }
 
-  function render(data) {
-    const summary = data.summary || {};
+  function render(data, currentData = null) {
+    const viewData = currentData || data;
+    const isFiltered = Boolean(currentData);
+    const summary = viewData.summary || {};
     document.querySelector('#market-dashboard-stats').innerHTML = [
       statMarkup('Active openings', Number(summary.active_listings || 0).toLocaleString(), delta(summary.active_delta, 'count') + ' vs prior period'),
       statMarkup('New openings', '+' + Number(summary.new_listings || 0).toLocaleString(), 'observed in selected window'),
       statMarkup('Active employers', Number(summary.employers || 0).toLocaleString()),
       statMarkup('Remote share', pct(summary.remote_share)),
       statMarkup('Contract share', pct(summary.contract_share)),
-      statMarkup('Stable coverage', Number(data.coverage?.stable_boards || 0).toLocaleString() + ' boards', Number(data.coverage?.monitored_boards || 0).toLocaleString() + ' monitored')
+      statMarkup(isFiltered ? 'Filtered openings' : 'Stable coverage', isFiltered ? Number(summary.active_listings || 0).toLocaleString() : Number(viewData.coverage?.stable_boards || 0).toLocaleString() + ' boards', isFiltered ? 'current listings matching filters' : Number(viewData.coverage?.monitored_boards || 0).toLocaleString() + ' monitored')
     ].join('');
-    const categoryNote = data.dimension === 'category' ? ' · Unknown = no usable classification text; Other = text did not match the current taxonomy' : '';
-    document.querySelector('#market-dashboard-coverage').textContent = (data.cohort === 'stable_28d' ? 'Stable cohort' : 'All observed boards') + ' · ' + data.from + ' → ' + data.to + ' · ' + Number(data.coverage?.snapshots || 0).toLocaleString() + ' snapshots · ' + (data.coverage?.coverage_note || 'Coverage note unavailable') + categoryNote;
+    const categoryNote = viewData.dimension === 'category' ? ' · Unknown = no usable classification text; Other = text did not match the current taxonomy' : '';
+    document.querySelector('#market-dashboard-coverage').textContent = isFiltered ? 'Current filtered view · ' + Number(summary.active_listings || 0).toLocaleString() + ' active listings match the selected filters · historical snapshots are not filtered.' : (viewData.cohort === 'stable_28d' ? 'Stable cohort' : 'All observed boards') + ' · ' + viewData.from + ' → ' + viewData.to + ' · ' + Number(viewData.coverage?.snapshots || 0).toLocaleString() + ' snapshots · ' + (viewData.coverage?.coverage_note || 'Coverage note unavailable') + categoryNote;
     const shareNote = document.querySelectorAll('.market-chart-panel .subtle')[1];
-    if (shareNote) shareNote.textContent = data.dimension === 'category' ? 'Each period totals 100% of the selected cohort.' : 'Relative share of classified observations; multi-label listings may overlap.';
+    if (shareNote) shareNote.textContent = viewData.dimension === 'category' ? 'Each period totals 100% of the selected cohort.' : 'Relative share of classified observations; multi-label listings may overlap.';
+    const volumeNote = document.querySelectorAll('.market-chart-panel .subtle')[0];
+    if (volumeNote) volumeNote.textContent = isFiltered ? 'Current active openings matching the selected filters.' : 'Active observed openings over time.';
     const mode = state.mode;
-    document.querySelector('#market-volume-chart').innerHTML = mode === 'share' ? '<p class="subtle">Volume hidden. Choose “Volume + share” or “Volume” to show absolute openings.</p>' : chartSvg(data, 'volume', 'Active openings by sector');
-    document.querySelector('#market-share-chart').innerHTML = mode === 'volume' ? '<p class="subtle">Share hidden. Choose “Volume + share” or “Share” to show sector mix.</p>' : chartSvg(data, 'share', 'Sector share over time');
-    document.querySelector('#market-flow-chart').innerHTML = flowSvg(data);
-    renderRankings(data);
+    document.querySelector('#market-volume-chart').innerHTML = mode === 'share' ? '<p class="subtle">Volume hidden. Choose “Volume + share” or “Volume” to show absolute openings.</p>' : chartSvg(viewData, 'volume', 'Active openings by sector');
+    document.querySelector('#market-share-chart').innerHTML = mode === 'volume' ? '<p class="subtle">Share hidden. Choose “Volume + share” or “Share” to show sector mix.</p>' : chartSvg(viewData, 'share', 'Sector share over time');
+    document.querySelector('#market-flow-chart').innerHTML = isFiltered ? '<p class="subtle">Opening flow is available for the unfiltered historical view. Clear filters to compare new and removed openings over time.</p>' : flowSvg(viewData);
+    renderRankings(viewData);
     renderSignals(data);
     bindChartTooltips();
-    document.querySelectorAll('.market-sector-key').forEach((button) => button.addEventListener('click', () => { state.focus = state.focus === button.dataset.sector ? '' : button.dataset.sector; persist(); render(data); }));
+    document.querySelectorAll('.market-sector-key').forEach((button) => button.addEventListener('click', () => { state.focus = state.focus === button.dataset.sector ? '' : button.dataset.sector; persist(); render(data, currentData); }));
+    document.querySelectorAll('.chart-sector').forEach((sector) => sector.addEventListener('click', () => openListingsForDimension(sector.dataset.sector)));
+    document.querySelectorAll('.chart-point').forEach((point) => point.addEventListener('click', () => openListingsForDimension(point.dataset.sector)));
     document.querySelectorAll('.market-evidence-button').forEach((button) => button.addEventListener('click', () => openEvidence(button.dataset.sector)));
     document.querySelectorAll('.market-signal-evidence-button').forEach((button) => button.addEventListener('click', () => openSignalEvidence(button.dataset.signalId).catch(console.error)));
   }
@@ -273,14 +322,35 @@
     });
   }
 
+  function setDashboardFilterOptions(selector, items, labels = {}, placeholder) {
+    const select = document.querySelector(selector);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">' + placeholder + '</option>' + (items || []).map((item) => '<option value="' + esc(item.value) + '">' + esc(labels[item.value] || item.value) + ' · ' + Number(item.count).toLocaleString() + '</option>').join('');
+    const selected = selector.includes('category') ? state.filterCategory : selector.includes('specialty') ? state.filterSpecialty : selector.includes('technology') ? state.filterTechnology : selector.includes('region') ? state.filterRegion : state.filterCountry;
+    if (selected && !(items || []).some((item) => item.value === selected)) select.add(new Option(label(selected), selected));
+    select.value = selected || current;
+  }
+
+  async function loadDashboardFilterOptions() {
+    const data = await api('/api/market/summary?active=true&limit=1');
+    const facets = data.facets || {};
+    setDashboardFilterOptions('#market-dashboard-filter-category', facets.categories, categoryLabels, 'Any category');
+    setDashboardFilterOptions('#market-dashboard-filter-specialty', facets.specialties, {}, 'Any specialty');
+    setDashboardFilterOptions('#market-dashboard-filter-technology', facets.technologies, {}, 'Any technology');
+    setDashboardFilterOptions('#market-dashboard-filter-region', facets.regions, {}, 'Any region');
+    setDashboardFilterOptions('#market-dashboard-filter-country', facets.countries, {}, 'Any country');
+  }
+
   async function loadDashboard() {
     persist();
     const loading = document.querySelector('#market-dashboard-loading');
     loading.classList.remove('hidden');
     try {
       const data = await api('/api/market/dashboard?' + dashboardQuery().toString());
-      render(data);
-      await loadTaxonomy();
+      const currentData = hasCurrentFilters() ? await api('/api/market/current?' + currentQuery().toString()) : null;
+      render(data, currentData);
+      await Promise.all([loadTaxonomy(), loadDashboardFilterOptions()]);
     } catch (error) {
       document.querySelector('#market-dashboard-content').innerHTML = '<div class="empty"><p>' + esc(error.message) + '</p></div>';
     } finally {
@@ -330,6 +400,7 @@
   setControls();
   document.querySelector('#market-dashboard-refresh').addEventListener('click', () => loadDashboard().catch(console.error));
   ['window', 'cohort', 'granularity', 'dimension', 'mode'].forEach((name) => document.querySelector('#market-dashboard-' + name).addEventListener('change', (event) => { state[name === 'window' ? 'windowDays' : name] = name === 'window' ? Number(event.target.value) : event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
+  [['filter-category', 'filterCategory'], ['filter-specialty', 'filterSpecialty'], ['filter-technology', 'filterTechnology'], ['filter-region', 'filterRegion'], ['filter-country', 'filterCountry'], ['provider', 'filterProvider'], ['work-mode', 'filterWorkMode'], ['employment', 'filterEmploymentType']].forEach(([id, key]) => document.querySelector('#market-dashboard-' + id).addEventListener('change', (event) => { state[key] = event.target.value; state.focus = ''; state.evidencePage = 0; loadDashboard().catch(console.error); }));
   document.querySelector('#market-dashboard-advanced-toggle').addEventListener('click', () => document.querySelector('#market-dashboard-advanced').classList.toggle('hidden'));
   document.querySelector('#market-evidence-close').addEventListener('click', () => { state.focus = ''; persist(); document.querySelector('#market-evidence').classList.add('hidden'); });
   document.querySelector('#market-evidence-open-listings').addEventListener('click', () => openListingsForDimension(state.focus));
