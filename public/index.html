@@ -17,22 +17,23 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header class="topbar">
+  <header class="site-header">
+  <div class="topbar">
     <div class="brand"><span class="brand-mark">✦</span><span>signal<span class="muted">/</span>hiring</span></div>
     <div class="topbar-actions"><button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><span class="theme-toggle-icon" aria-hidden="true">☾</span><span class="theme-toggle-label">Dark mode</span></button><div class="live"><span id="live-dot" class="dot"></span><span id="live-label">connecting</span></div></div>
+  </div>
+  <nav class="tabs" aria-label="Sections">
+    <button class="tab active" data-view="listings">Listings <span id="listing-count" class="tab-count">0</span></button>
+    <button class="tab" data-view="market">Market</button>
+    <button class="tab" data-view="companies">Companies</button>
+    <button class="tab" data-view="polling">Polling tasks</button>
+    <button class="tab" data-view="monitoring">Monitoring</button>
+    <button class="tab" data-view="rules">Detection rules</button>
+    <button class="tab" data-view="authors">Authors</button>
+    <button class="tab" data-view="settings">Preferences</button>
+  </nav>
   </header>
   <main class="shell">
-    <nav class="tabs" aria-label="Sections">
-      <button class="tab active" data-view="listings">Listings <span id="listing-count" class="tab-count">0</span></button>
-      <button class="tab" data-view="market">Market</button>
-      <button class="tab" data-view="companies">Companies</button>
-      <button class="tab" data-view="polling">Polling tasks</button>
-      <button class="tab" data-view="monitoring">Monitoring</button>
-      <button class="tab" data-view="rules">Detection rules</button>
-      <button class="tab" data-view="authors">Authors</button>
-      <button class="tab" data-view="settings">Preferences</button>
-    </nav>
-
     <section id="view-market" class="view">
       <div class="page-heading"><div><p class="eyebrow">MARKET OBSERVABILITY</p><h1>Market Explorer</h1><p class="subtle">Explore observed openings by category, specialty, technology, geography, and employer. Aggregates are calculated server-side and link back to supporting listings.</p></div><div class="heading-actions"><button id="refresh-market" class="button secondary" type="button">Refresh</button></div></div>
       <div class="stats" id="market-stats"><div class="stat"><span>Active listings</span><strong>—</strong></div><div class="stat"><span>Employers</span><strong>—</strong></div><div class="stat"><span>Engineering openings</span><strong>—</strong></div><div class="stat"><span>Remote openings</span><strong>—</strong></div><div class="stat"><span>Salary coverage</span><strong>—</strong></div></div>

@@ -51,3 +51,7 @@
 [data-theme="dark"] .market-chart-tooltip{background:#e6f2eb;color:#14221b}
 [data-theme="dark"] .theme-toggle{background:transparent;color:var(--ink);border-color:var(--line)}
 @media(max-width:520px){.topbar-actions{gap:10px}.theme-toggle-label{display:none}.theme-toggle{padding:8px 9px}.live{font-size:10px}}
+.site-header{position:sticky;top:0;z-index:3;background:var(--paper);border-bottom:1px solid var(--line);box-shadow:0 4px 18px #23443108}
+.site-header .topbar{position:static;border-bottom:0}
+.site-header .tabs{max-width:1180px;margin:0 auto;padding:0 24px}
+@media(max-width:760px){.site-header .tabs{padding:0 15px}}

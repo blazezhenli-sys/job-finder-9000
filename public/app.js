@@ -150,3 +150,104 @@ const originalLoadMarketSignalEvidence = loadMarketSignalEvidence;
 loadMarketSignalEvidence = async function(id) { await originalLoadMarketSignalEvidence(id); const data = await api('/api/market/signals/' + encodeURIComponent(id)); const names = (data.companies || []).map((company) => '<a class=\'source-link\' href=\'#\' data-company-id=\'' + esc(company.id) + '\'>' + esc(company.name) + '</a>').join(', '); if (names) { $('#market-signal-evidence .company-panel-heading').insertAdjacentHTML('afterend', '<p class=\'subtle\'>Contributing companies: ' + names + '</p>'); document.querySelectorAll('#market-signal-evidence [data-company-id]').forEach((link) => link.addEventListener('click', (event) => { event.preventDefault(); openCompany(link.dataset.companyId).catch(console.error); })); } };
 const marketUrlParams = new URLSearchParams(location.search);
 for (const [id, key] of [['market-active','active'],['market-category','category'],['market-provider','provider'],['market-specialty','specialty'],['market-work-mode','workMode'],['market-eligibility','remoteEligibility'],['market-region','region'],['market-country','country'],['market-technology','technology'],['market-employment','employmentType'],['market-seniority','seniority'],['market-location','location'],['market-employer','employer'],['market-currency','salaryCurrency'],['market-min-salary','minSalary'],['market-max-salary','maxSalary'],['market-max-age','maxAgeDays'],['market-published-after','publishedAfter'],['market-published-before','publishedBefore'],['market-first-observed','firstObservedAfter'],['market-search','q'],['market-sort','sort']]) { const value = marketUrlParams.get(key); if (value && $('#' + id)) $('#' + id).value = value; }
+
+// Keep in-app navigation in the browser history so Back returns to the exact list context.
+const appNavigation = { handlingRoute: false, preserveListingReset: false, preserveCompanyReset: false };
+const nativeReplaceState = history.replaceState.bind(history);
+const navigationUrl = (hash = location.hash) => `${location.pathname}${location.search}${hash || ''}`;
+history.replaceState = (stateValue, title, url) => nativeReplaceState(stateValue, title, typeof url === 'string' && location.hash && !url.includes('#') ? `${url}${location.hash}` : url);
+const validNavigationViews = new Set(['listings', 'market', 'companies', 'polling', 'monitoring', 'rules', 'authors', 'settings', 'company-profile']);
+function navigationRoute() {
+  const parts = decodeURIComponent(location.hash.replace(/^#/, '')).split('/').filter(Boolean);
+  const listingIndex = parts.indexOf('listing');
+  if (listingIndex > 0 && parts[listingIndex + 1]) return { kind: 'listing', id: parts[listingIndex + 1], parentHash: `#${parts.slice(0, listingIndex).join('/')}`, parentView: parts[0] === 'companies' && parts[1] === 'company' ? 'company-profile' : parts[0] };
+  const companyIndex = parts.indexOf('company');
+  if (companyIndex === 0 && parts[1]) return { kind: 'company', id: parts[1], view: 'company-profile' };
+  const view = validNavigationViews.has(parts[0]) ? parts[0] : 'listings';
+  return { kind: 'view', view };
+}
+function saveNavigationPosition() { nativeReplaceState({ ...(history.state || {}), scrollY: window.scrollY }, '', navigationUrl()); }
+function pushNavigation(hash, extraState = {}) { saveNavigationPosition(); history.pushState({ ...(history.state || {}), ...extraState, scrollY: 0 }, '', navigationUrl(hash)); }
+function restoreNavigationPosition(stateValue) { requestAnimationFrame(() => window.scrollTo({ top: Number(stateValue?.scrollY || 0), left: 0, behavior: 'auto' })); }
+function closeListingDrawer() { $('#drawer')?.classList.add('hidden'); }
+
+const navigationBaseShowView = showView;
+showView = function(view) {
+  navigationBaseShowView(view);
+  if (appNavigation.handlingRoute) return;
+  const route = navigationRoute();
+  if (route.kind === 'view' && route.view === view) return;
+  pushNavigation(`#${view}`);
+  restoreNavigationPosition({ scrollY: 0 });
+};
+
+const navigationBaseLoadListings = loadListings;
+loadListings = async function(resetPage = false) {
+  const preservePage = appNavigation.preserveListingReset;
+  appNavigation.preserveListingReset = false;
+  return navigationBaseLoadListings(preservePage ? false : resetPage);
+};
+const navigationBaseLoadCompanies = loadCompanies;
+loadCompanies = async function(resetPage = false) {
+  const preservePage = appNavigation.preserveCompanyReset;
+  appNavigation.preserveCompanyReset = false;
+  return navigationBaseLoadCompanies(preservePage ? false : resetPage);
+};
+document.addEventListener('click', (event) => {
+  const tab = event.target.closest('.tab');
+  if (tab?.dataset.view === 'listings') appNavigation.preserveListingReset = true;
+  if (tab?.dataset.view === 'companies') appNavigation.preserveCompanyReset = true;
+}, true);
+
+const navigationBaseOpenCompany = openCompany;
+openCompany = async function(id, options = {}) {
+  if (!options.fromHistory && !appNavigation.handlingRoute) {
+    saveNavigationPosition();
+    pushNavigation(`#companies/company/${encodeURIComponent(id)}`);
+  }
+  appNavigation.handlingRoute = true;
+  try { return await navigationBaseOpenCompany(id); } finally { appNavigation.handlingRoute = false; }
+};
+const navigationBaseOpenListing = openListing;
+openListing = async function(id, options = {}) {
+  if (!options.fromHistory && !appNavigation.handlingRoute) {
+    const route = navigationRoute();
+    const parentHash = location.hash && (route.kind === 'view' || route.kind === 'company') ? location.hash : (route.parentHash || '#listings');
+    saveNavigationPosition();
+    pushNavigation(`${parentHash.replace(/\/$/, '')}/listing/${encodeURIComponent(id)}`);
+  }
+  return navigationBaseOpenListing(id);
+};
+
+document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => showView(tab.dataset.view)));
+document.querySelector('#close-drawer')?.addEventListener('click', () => { if (navigationRoute().kind === 'listing') history.back(); });
+document.querySelector('.drawer-backdrop')?.addEventListener('click', () => { if (navigationRoute().kind === 'listing') history.back(); });
+document.addEventListener('click', (event) => { if (event.target.closest('#drawer .listing-action') && navigationRoute().kind === 'listing') history.back(); }, true);
+
+async function applyNavigationRoute(initial = false) {
+  const route = navigationRoute();
+  closeListingDrawer();
+  if (route.kind === 'listing') {
+    appNavigation.handlingRoute = true;
+    try {
+      navigationBaseShowView(route.parentView);
+      await openListing(route.id, { fromHistory: true });
+    } finally { appNavigation.handlingRoute = false; }
+    restoreNavigationPosition(history.state);
+    return;
+  }
+  if (route.kind === 'company') {
+    await openCompany(route.id, { fromHistory: true });
+    restoreNavigationPosition(history.state);
+    return;
+  }
+  appNavigation.handlingRoute = true;
+  navigationBaseShowView(route.view);
+  appNavigation.handlingRoute = false;
+  if (initial && route.view === 'companies') await loadCompanies();
+  if (initial && route.view === 'market' && typeof loadMarket === 'function') await loadMarket();
+  restoreNavigationPosition(history.state);
+}
+if (!location.hash) nativeReplaceState({ view: 'listings', scrollY: 0 }, '', navigationUrl('#listings'));
+window.addEventListener('popstate', () => applyNavigationRoute().catch(console.error));
+window.addEventListener('load', () => applyNavigationRoute(true).catch(console.error));
