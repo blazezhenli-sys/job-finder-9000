@@ -94,7 +94,8 @@ const namePaths = [
 const domainPaths = [
   ['company_website'], ['companyWebsite'], ['company_url'], ['companyUrl'], ['employer_website'], ['employerWebsite'],
   ['company', 'website'], ['company', 'url'], ['company', 'domain'], ['employer', 'website'], ['employer', 'url'],
-  ['organization', 'url'], ['organization', 'website'], ['hiringOrganization', 'url'], ['hiring_organization', 'url'],
+  ['organization', 'url'], ['organization', 'website'], ['organization', 'publicWebsite'], ['organization', 'customJobsPageUrl'],
+  ['hiringOrganization', 'url'], ['hiringOrganization', 'website'], ['hiringOrganization', 'publicWebsite'], ['hiring_organization', 'url'],
   ['website'], ['domain']
 ];
 
@@ -178,6 +179,34 @@ function titleValue(html: string): string {
   return decodeHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '').replace(/<[^>]+>/g, '').trim();
 }
 
+function assignedJsonObject(html: string, assignment: string): Record<string, unknown> | undefined {
+  const assignmentIndex = html.indexOf(assignment);
+  if (assignmentIndex < 0) return undefined;
+  const start = html.indexOf('{', assignmentIndex + assignment.length);
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < html.length; index += 1) {
+    const character = html[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') { inString = true; continue; }
+    if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) {
+      try {
+        const parsed: unknown = JSON.parse(html.slice(start, index + 1));
+        return record(parsed);
+      } catch { return undefined; }
+    }
+  }
+  return undefined;
+}
+
 function nameFromTitle(title: string, provider: AtsProvider): string {
   const cleaned = text(title).replace(/\s+/g, ' ');
   const explicit = cleaned.match(/^(?:careers?|jobs?|job openings?)\s+(?:at|with|for)\s+(.+)$/i)?.[1]
@@ -202,6 +231,10 @@ function anchorWebsite(html: string): string {
 
 export function identityFromAtsHtml(html: string, provider: AtsProvider): CompanyIdentity {
   const observations: CompanyIdentity[] = [];
+  if (provider === 'ashby') {
+    const appData = assignedJsonObject(html, 'window.__appData');
+    if (appData?.organization) observations.push(identityFromPayload({ organization: appData.organization }, 'ats_board_page'));
+  }
   for (const value of jsonLdValues(html)) {
     const type = text(value['@type']).toLowerCase();
     const nested = record(value.hiringOrganization) ?? record(value.organization);

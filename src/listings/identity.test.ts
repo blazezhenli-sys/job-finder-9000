@@ -16,6 +16,11 @@ describe('company identity resolution', () => {
     expect(identity.sources).toContain('ats_board_page');
   });
 
+  it('extracts Ashby organization data embedded in the board bootstrap state', () => {
+    const identity = identityFromAtsHtml(`<script>window.__appData = {"organization":{"name":"Linear","publicWebsite":"https://linear.app/","customJobsPageUrl":"https://linear.app/careers"},"posting":null};</script>`, 'ashby');
+    expect(identity).toMatchObject({ name: 'Linear', domain: 'linear.app', website: 'https://linear.app' });
+  });
+
   it('uses a listing payload company name without treating the ATS URL as a domain', () => {
     const identity = identityFromListings([{
       providerJobId: '1', title: 'Engineer', companyName: 'Example Co', description: '',
