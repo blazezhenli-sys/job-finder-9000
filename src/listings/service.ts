@@ -7,6 +7,8 @@ import { getPreferences, pool, withTransaction } from '../db.js';
 import { config } from '../config.js';
 import type { JobBoard, NormalizedJobListing } from '../types.js';
 import { events } from '../pipeline-service.js';
+import { resolveAtsBoardIdentity } from './identity.js';
+import { resolveExistingBoardEmployer } from './employer-resolution.js';
 
 let polling = false;
 
@@ -24,17 +26,25 @@ async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (i
 }
 
 async function boardRows(): Promise<JobBoard[]> {
-  const result = await pool.query(`SELECT b.*, e.name AS employer_name, e.website AS company_website
+  const result = await pool.query(`SELECT b.*, e.name AS employer_name, e.website AS company_website,
+      e.identity_domain, e.identity_name_source, e.identity_domain_source, e.identity_last_observed_at
     FROM job_boards b JOIN employers e ON e.id = b.employer_id WHERE b.status = 'active'
     AND (b.last_successful_poll IS NULL OR b.last_successful_poll + (b.polling_interval_seconds * interval '1 second') <= now())
     ORDER BY b.last_successful_poll NULLS FIRST, b.created_at`);
   return result.rows.map((row) => ({
     id: row.id, employerId: row.employer_id, employerName: row.employer_name, companyWebsite: row.company_website,
+    identityDomain: row.identity_domain, identityNameSource: row.identity_name_source, identityDomainSource: row.identity_domain_source, identityLastObservedAt: row.identity_last_observed_at,
     provider: row.provider, boardIdentifier: row.board_identifier, boardUrl: row.board_url, status: row.status, discoverySource: row.discovery_source,
     firstDiscoveredAt: row.first_discovered_at, initializedAt: row.initialized_at, lastSuccessfulPoll: row.last_successful_poll,
     lastAttemptedPoll: row.last_attempted_poll, lastNewListingDiscovered: row.last_new_listing_discovered,
     pollingIntervalSeconds: Number(row.polling_interval_seconds), consecutiveFailureCount: Number(row.consecutive_failure_count), lastError: row.last_error
   }));
+}
+
+function identityNeedsRefresh(board: JobBoard): boolean {
+  if (board.provider === 'remotive' || board.provider === 'adzuna' || board.identityDomain) return false;
+  if (!board.identityLastObservedAt) return true;
+  return new Date(board.identityLastObservedAt).getTime() < Date.now() - 7 * 86_400_000;
 }
 
 async function ensureAggregatorBoards() {
@@ -43,7 +53,7 @@ async function ensureAggregatorBoards() {
   ];
   if (config.adzunaAppId && config.adzunaAppKey) for (const country of config.adzunaCountries) sources.push({ provider: 'adzuna', identifier: country, employer: `Adzuna (${country.toUpperCase()})`, url: `https://www.adzuna.com/${country}`, interval: config.adzunaBoardPollIntervalSeconds });
   for (const source of sources) {
-    const employer = await pool.query(`INSERT INTO employers (name, website) VALUES ($1,$2) ON CONFLICT (name, website) DO UPDATE SET updated_at=now() RETURNING id`, [source.employer, source.url]);
+    const employer = await pool.query(`INSERT INTO employers (name, website, identity_name_source, identity_domain_source) VALUES ($1,$2,'aggregator','aggregator') ON CONFLICT (name, website) DO UPDATE SET updated_at=now() RETURNING id`, [source.employer, source.url]);
     await pool.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source, polling_interval_seconds) VALUES ($1,$2,$3,$4,'aggregator-default',$5) ON CONFLICT (provider, board_identifier) DO UPDATE SET polling_interval_seconds=EXCLUDED.polling_interval_seconds, updated_at=now()`, [employer.rows[0].id, source.provider, source.identifier, source.url, source.interval]);
   }
 }
@@ -95,6 +105,17 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
     const result = { status: 'failed' as const, listingsSeen: 0, newListings: 0, error: message };
     await finishPollTask(taskId, result);
     return result;
+  }
+  if (identityNeedsRefresh(board)) {
+    const identity = await resolveAtsBoardIdentity(board.provider as 'greenhouse' | 'ashby' | 'lever', board.boardIdentifier, listings);
+    await withTransaction(async (client) => resolveExistingBoardEmployer(client, {
+      boardId: board.id,
+      currentEmployerId: board.employerId,
+      provider: board.provider as 'greenhouse' | 'ashby' | 'lever',
+      boardIdentifier: board.boardIdentifier,
+      identity,
+      provisionalName: board.employerName
+    }));
   }
   const observedIds = listings.map((listing) => listing.providerJobId);
   const existing = await pool.query(`SELECT id, provider_job_id, first_observed_at, is_active, consecutive_missing_checks,

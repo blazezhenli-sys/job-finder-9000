@@ -11,6 +11,7 @@ import { getMarketCurrent, getMarketSummary, marketWhere, type MarketQuery } fro
 import { jobCategoryLabels, LISTING_CLASSIFICATION_VERSION, loadTechnologyTaxonomy } from './listings/classification.js';
 import { getMarketDashboard, getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
+import { normalizeCompanyDomain } from './listings/identity.js';
 
 const app = Fastify({ logger: true });
 const publicDir = path.join(process.cwd(), 'public');
@@ -307,7 +308,7 @@ app.get('/api/companies', async (request) => {
     FROM employers e LEFT JOIN job_boards b ON b.employer_id=e.id LEFT JOIN job_listings l ON l.board_id=b.id
     GROUP BY e.id
   )
-  SELECT e.id, e.name, e.website, e.verified_domain, e.description, e.industry, e.headquarters, e.company_size, e.prospect_status, e.first_discovered_at, e.updated_at,
+  SELECT e.id, e.name, e.website, e.identity_domain, e.identity_name_source, e.identity_domain_source, e.identity_confidence, e.verified_domain, e.description, e.industry, e.headquarters, e.company_size, e.prospect_status, e.first_discovered_at, e.updated_at,
     metrics.board_count, metrics.active_board_count, metrics.active_listing_count, metrics.new_listings_7d, metrics.new_listings_30d, metrics.active_engineering, metrics.new_engineering_7d, metrics.new_engineering_30d, metrics.remote_listing_count, metrics.contract_listing_count, metrics.latest_hiring_activity, metrics.latest_listing_date, metrics.providers
   FROM employers e JOIN metrics ON metrics.id=e.id ${where}`;
   const sort = companySorts[query.sort ?? ''] ?? companySorts.name;
@@ -324,7 +325,7 @@ const requirementSpecialties: Record<string, true> = {
 
 app.get('/api/companies/:id', async (request, reply) => {
   const id = (request.params as { id: string }).id;
-  const company = await pool.query(`SELECT id, name, website, verified_domain, description, industry, headquarters, company_size, prospect_status, prospect_notes, follow_up_at, contacted_at, first_discovered_at, updated_at FROM employers WHERE id=$1`, [id]);
+  const company = await pool.query(`SELECT id, name, website, identity_domain, identity_name_source, identity_domain_source, identity_confidence, verified_domain, description, industry, headquarters, company_size, prospect_status, prospect_notes, follow_up_at, contacted_at, first_discovered_at, updated_at FROM employers WHERE id=$1`, [id]);
   if (!company.rows[0]) return reply.code(404).send({ error: 'Company not found' });
   const [boards, summary, specialties, listings, activity, dailyActivity, storedSignals, events] = await Promise.all([
     pool.query(`SELECT b.*, count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1 GROUP BY b.id ORDER BY b.status, b.provider, b.board_identifier`, [id]),
@@ -358,6 +359,12 @@ app.patch('/api/companies/:id', async (request, reply) => {
   const assignments: string[] = [];
   const values: unknown[] = [];
   for (const [field, value] of fields) if (value !== undefined) { values.push(value === null ? null : value.trim()); assignments.push(`${field}=$${values.length}`); }
+  if (body.name !== undefined) { values.push('manual'); assignments.push(`identity_name_source=$${values.length}`); }
+  if (body.website !== undefined || body.verifiedDomain !== undefined) {
+    const identityDomain = normalizeCompanyDomain(body.verifiedDomain ?? body.website ?? '');
+    values.push(identityDomain); assignments.push(`identity_domain=$${values.length}`);
+    values.push('manual'); assignments.push(`identity_domain_source=$${values.length}`);
+  }
   if (!assignments.length) return reply.code(400).send({ error: 'No changes supplied' });
   values.push((request.params as { id: string }).id);
   const result = await pool.query(`UPDATE employers SET ${assignments.join(', ')}, updated_at=now() WHERE id=$${values.length} RETURNING *`, values);
@@ -423,7 +430,8 @@ app.post('/api/job-boards', async (request, reply) => {
   if (!identifier) return reply.code(400).send({ error: 'boardIdentifier or boardUrl is required' });
   const employerName = body.employerName.trim();
   const board = await withTransaction(async (client) => {
-    const employer = await client.query(`INSERT INTO employers (name, website) VALUES ($1,$2) ON CONFLICT (name, website) DO UPDATE SET updated_at=now() RETURNING id`, [employerName, body.companyWebsite?.trim() ?? '']);
+    const companyWebsite = body.companyWebsite?.trim() ?? '';
+    const employer = await client.query(`INSERT INTO employers (name, website, identity_domain, identity_name_source, identity_domain_source) VALUES ($1,$2,$3,'manual',CASE WHEN $3='' THEN 'legacy' ELSE 'manual' END) ON CONFLICT (name, website) DO UPDATE SET updated_at=now() RETURNING id`, [employerName, companyWebsite, normalizeCompanyDomain(companyWebsite)]);
     const host = body.provider === 'greenhouse' ? 'boards.greenhouse.io' : body.provider === 'ashby' ? 'jobs.ashbyhq.com' : body.provider === 'lever' ? 'jobs.lever.co' : body.provider === 'remotive' ? 'remotive.com/remote-jobs' : 'adzuna.com';
     const result = await client.query(`INSERT INTO job_boards (employer_id, provider, board_identifier, board_url, discovery_source, polling_interval_seconds) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (provider, board_identifier) DO UPDATE SET employer_id=EXCLUDED.employer_id, board_url=EXCLUDED.board_url, discovery_source=EXCLUDED.discovery_source, polling_interval_seconds=EXCLUDED.polling_interval_seconds, status='active', updated_at=now() RETURNING *`, [employer.rows[0].id, body.provider, identifier, body.boardUrl?.trim() || `https://${host}/${identifier}`, body.discoverySource?.trim() || 'manual', Math.max(60, Number(body.pollingIntervalSeconds) || 3_600)]);
     return result.rows[0];
