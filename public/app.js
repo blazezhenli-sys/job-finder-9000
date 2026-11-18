@@ -251,3 +251,19 @@ async function applyNavigationRoute(initial = false) {
 if (!location.hash) nativeReplaceState({ view: 'listings', scrollY: 0 }, '', navigationUrl('#listings'));
 window.addEventListener('popstate', () => applyNavigationRoute().catch(console.error));
 window.addEventListener('load', () => applyNavigationRoute(true).catch(console.error));
+
+const renderCompanyProfileWithBoardLinks = renderCompanyProfile;
+renderCompanyProfile = function(data) {
+  renderCompanyProfileWithBoardLinks(data);
+  const boardPanel = [...document.querySelectorAll('#company-profile .company-panel')].find((panel) => panel.querySelector('h2')?.textContent.trim() === 'ATS boards');
+  if (!boardPanel) return;
+  const rows = boardPanel.querySelectorAll('.health-row');
+  (data.boards || []).forEach((board, index) => {
+    const label = `${board.provider} · ${board.board_identifier}`;
+    const url = (() => { try { const parsed = new URL(board.board_url || ''); return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : ''; } catch { return ''; } })();
+    const row = rows[index];
+    const value = row?.querySelector('span');
+    if (!value) return;
+    value.innerHTML = `${url ? `<a class="source-link" href="${esc(url)}" target="_blank" rel="noreferrer">${esc(label)} ↗</a>` : esc(label)}<small class="subtle">${board.status === 'active' ? ' · active' : ' · disabled'}</small>`;
+  });
+};
