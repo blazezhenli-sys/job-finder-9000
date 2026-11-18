@@ -80,14 +80,17 @@
 
   function groupSeries(data) {
     const periods = [...new Set((data.series || []).map((row) => row.snapshot_date))].sort();
-    const keys = (data.rankings || []).slice(0, 8).map((row) => row.dimension_value);
+    const keyTotals = new Map();
+    (data.series || []).forEach((row) => keyTotals.set(row.dimension_value, (keyTotals.get(row.dimension_value) || 0) + Number(row.active_listings || 0)));
+    const keys = [...keyTotals.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, 8).map(([key]) => key);
     const rows = periods.map((period) => {
       const values = new Map((data.series || []).filter((row) => row.snapshot_date === period).map((row) => [row.dimension_value, row]));
       const total = [...values.values()].reduce((sum, row) => sum + Number(row.active_listings || 0), 0);
-      const selected = state.focus && keys.includes(state.focus) ? state.focus : '';
-      const chartKeys = selected ? [selected, '__other'] : [...keys, '__other'];
-      return { period, values, total, chartKeys };
+      return { period, values, total };
     });
+    const hasRemaining = rows.some((entry) => entry.total > keys.reduce((sum, key) => sum + Number(entry.values.get(key)?.active_listings || 0), 0));
+    const selected = state.focus && keys.includes(state.focus) ? state.focus : '';
+    rows.forEach((entry) => { entry.chartKeys = selected ? [selected, ...(hasRemaining ? ['__remaining'] : [])] : [...keys, ...(hasRemaining ? ['__remaining'] : [])]; });
     return { periods, keys, rows };
   }
 
@@ -97,8 +100,8 @@
     const width = 900, height = 285, left = 42, right = 16, top = 18, bottom = 34;
     const plotWidth = width - left - right, plotHeight = height - top - bottom;
     const valuesFor = (entry, key) => {
-      if (key === '__other') {
-        const known = entry.chartKeys.filter((item) => item !== '__other').reduce((sum, item) => sum + Number(entry.values.get(item)?.active_listings || 0), 0);
+      if (key === '__remaining') {
+        const known = entry.chartKeys.filter((item) => item !== '__remaining').reduce((sum, item) => sum + Number(entry.values.get(item)?.active_listings || 0), 0);
         return Math.max(0, entry.total - known);
       }
       return Number(entry.values.get(key)?.active_listings || 0);
@@ -124,7 +127,7 @@
       const shape = grouped.rows.length === 1
         ? '<rect x="' + left + '" y="' + tops[0] + '" width="' + plotWidth + '" height="' + Math.max(2, y(bottomValues[0]) - tops[0]) + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">'
         : '<path d="' + path + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">';
-      return shape + '<title>' + esc(label(key === '__other' ? 'Other' : key)) + '</title>' + (grouped.rows.length === 1 ? '</rect>' : '</path>');
+      return shape + '<title>' + esc(label(key === '__remaining' ? 'Remaining' : key)) + '</title>' + (grouped.rows.length === 1 ? '</rect>' : '</path>');
     }).join('') : '';
     const hoverPoints = grouped.rows.map((entry, index) => {
       let stack = 0;
@@ -132,16 +135,28 @@
         const raw = valuesFor(entry, key);
         const value = field === 'share' ? (entry.total ? raw / entry.total : 0) : raw;
         stack += value;
-        return '<circle cx="' + x(index) + '" cy="' + y(stack) + '" r="7" class="chart-point" data-tooltip="' + esc(String(entry.period).slice(0, 10) + ' · ' + label(key === '__other' ? 'Other' : key) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString())) + '"><title>' + esc(String(entry.period).slice(0, 10)) + ' · ' + esc(label(key === '__other' ? 'Other' : key)) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()) + '</title></circle>';
+        return '<circle cx="' + x(index) + '" cy="' + y(stack) + '" r="7" class="chart-point" data-tooltip="' + esc(String(entry.period).slice(0, 10) + ' · ' + label(key === '__remaining' ? 'Remaining' : key) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString())) + '"><title>' + esc(String(entry.period).slice(0, 10)) + ' · ' + esc(label(key === '__remaining' ? 'Remaining' : key)) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()) + '</title></circle>';
       }).join('');
+    }).join('');
+    const periodHoverZones = grouped.rows.map((entry, index) => {
+      const step = grouped.rows.length < 2 ? plotWidth : plotWidth / (grouped.rows.length - 1);
+      const zoneX = grouped.rows.length < 2 ? left : Math.max(left, x(index) - step / 2);
+      const zoneWidth = grouped.rows.length < 2 ? plotWidth : Math.min(step, width - right - zoneX);
+      const lines = [String(entry.period).slice(0, 10)];
+      entry.chartKeys.forEach((key) => {
+        const raw = valuesFor(entry, key);
+        const value = field === 'share' ? (entry.total ? raw / entry.total : 0) : raw;
+        if (raw > 0) lines.push(label(key === '__remaining' ? 'Remaining' : key) + ': ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()));
+      });
+      return '<rect x="' + zoneX + '" y="' + top + '" width="' + zoneWidth + '" height="' + plotHeight + '" class="period-hover-zone" data-tooltip="' + esc(lines.join('\n')) + '"></rect>';
     }).join('');
     const labels = grouped.rows.filter((entry, index) => index === 0 || index === grouped.rows.length - 1 || index % Math.max(1, Math.floor(grouped.rows.length / 4)) === 0).map((entry) => {
       const index = grouped.periods.indexOf(entry.period);
       return '<text x="' + x(index) + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(String(entry.period).slice(0, 10)) + '</text>';
     }).join('');
     const legendKeys = grouped.rows[0]?.chartKeys || [];
-    const legend = legendKeys.map((key, index) => '<button type="button" class="market-sector-key ' + (state.focus === key ? 'selected' : '') + '" data-sector="' + esc(key) + '"><i style="background:' + colors[index % colors.length] + '"></i>' + esc(label(key === '__other' ? 'Other' : key)) + '</button>').join('');
-    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(title) + '"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight) + '" y2="' + (top + plotHeight) + '" class="chart-axis"></line><line x1="' + left + '" x2="' + (width - right) + '" y1="' + top + '" y2="' + top + '" class="chart-gridline"></line>' + paths + hoverPoints + labels + '</svg><div class="market-chart-legend">' + legend + '</div></div>';
+    const legend = legendKeys.map((key, index) => '<button type="button" class="market-sector-key ' + (state.focus === key ? 'selected' : '') + '" data-sector="' + esc(key) + '"><i style="background:' + colors[index % colors.length] + '"></i>' + esc(label(key === '__remaining' ? 'Remaining' : key)) + '</button>').join('');
+    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(title) + '"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight) + '" y2="' + (top + plotHeight) + '" class="chart-axis"></line><line x1="' + left + '" x2="' + (width - right) + '" y1="' + top + '" y2="' + top + '" class="chart-gridline"></line>' + paths + periodHoverZones + hoverPoints + labels + '</svg><div class="market-chart-legend">' + legend + '</div></div>';
   }
 
   function flowSvg(data) {
@@ -158,7 +173,7 @@
       const scale = (plotHeight / 2) / maxValue;
       const x = left + (grouped.rows.length < 2 ? plotWidth / 2 : (index / (grouped.rows.length - 1)) * plotWidth);
       const addedHeight = added * scale, removedHeight = removed * scale;
-      return '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight / 2 - addedHeight) + '" width="' + (barWidth / 2 - 1) + '" height="' + addedHeight + '" class="flow-new chart-hover-target" data-tooltip="' + esc(String(entry.period) + ' · New observed: +' + added.toLocaleString()) + '"><title>' + esc(entry.period) + ': +' + added.toLocaleString() + ' new</title></rect><rect x="' + (x + 1) + '" y="' + (top + plotHeight / 2) + '" width="' + (barWidth / 2 - 1) + '" height="' + removedHeight + '" class="flow-removed chart-hover-target" data-tooltip="' + esc(String(entry.period) + ' · Removed observed: ' + removed.toLocaleString()) + '"><title>' + esc(entry.period) + ': ' + removed.toLocaleString() + ' removed</title></rect>';
+      return '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight / 2 - addedHeight) + '" width="' + (barWidth / 2 - 1) + '" height="' + addedHeight + '" class="flow-new chart-hover-target" data-tooltip="' + esc('New observed: +' + added.toLocaleString()) + '"><title>' + esc(entry.period) + ': +' + added.toLocaleString() + ' new</title></rect><rect x="' + (x + 1) + '" y="' + (top + plotHeight / 2) + '" width="' + (barWidth / 2 - 1) + '" height="' + removedHeight + '" class="flow-removed chart-hover-target" data-tooltip="' + esc('Removed observed: ' + removed.toLocaleString()) + '"><title>' + esc(entry.period) + ': ' + removed.toLocaleString() + ' removed</title></rect>';
     }).join('');
     const labels = grouped.rows.filter((entry, index) => index === 0 || index === grouped.rows.length - 1 || index % Math.max(1, Math.floor(grouped.rows.length / 4)) === 0).map((entry) => {
       const index = grouped.periods.indexOf(entry.period);
@@ -200,7 +215,8 @@
       statMarkup('Contract share', pct(summary.contract_share)),
       statMarkup('Stable coverage', Number(data.coverage?.stable_boards || 0).toLocaleString() + ' boards', Number(data.coverage?.monitored_boards || 0).toLocaleString() + ' monitored')
     ].join('');
-    document.querySelector('#market-dashboard-coverage').textContent = (data.cohort === 'stable_28d' ? 'Stable cohort' : 'All observed boards') + ' · ' + data.from + ' → ' + data.to + ' · ' + Number(data.coverage?.snapshots || 0).toLocaleString() + ' snapshots · ' + (data.coverage?.coverage_note || 'Coverage note unavailable');
+    const categoryNote = data.dimension === 'category' ? ' · Unknown = no usable classification text; Other = text did not match the current taxonomy' : '';
+    document.querySelector('#market-dashboard-coverage').textContent = (data.cohort === 'stable_28d' ? 'Stable cohort' : 'All observed boards') + ' · ' + data.from + ' → ' + data.to + ' · ' + Number(data.coverage?.snapshots || 0).toLocaleString() + ' snapshots · ' + (data.coverage?.coverage_note || 'Coverage note unavailable') + categoryNote;
     const shareNote = document.querySelectorAll('.market-chart-panel .subtle')[1];
     if (shareNote) shareNote.textContent = data.dimension === 'category' ? 'Each period totals 100% of the selected cohort.' : 'Relative share of classified observations; multi-label listings may overlap.';
     const mode = state.mode;

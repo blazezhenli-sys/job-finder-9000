@@ -20,6 +20,7 @@ let listingTimer: NodeJS.Timeout | undefined;
 let discoveryTimer: NodeJS.Timeout | undefined;
 let analyticsTimer: NodeJS.Timeout | undefined;
 let classificationTimer: NodeJS.Timeout | undefined;
+let classificationReady: Promise<void> | undefined;
 
 export async function startWorkers() {
   if (started) return;
@@ -45,11 +46,11 @@ export async function startWorkers() {
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));
   if (config.enableListings) {
-    void backfillListingClassification().catch((error) => console.error('listing classification backfill failed', error));
+    classificationReady = backfillListingClassification().catch((error) => console.error('listing classification backfill failed', error));
     classificationTimer = setInterval(() => void loadTechnologyTaxonomy().then(() => backfillListingClassification()).catch((error) => console.error('listing classification refresh failed', error)), 60 * 60 * 1000);
   }
   if (config.enableListings) {
-    const runAnalytics = async () => { await runDailyMarketSnapshot(); await detectMarketSignals(); };
+    const runAnalytics = async () => { await classificationReady; await runDailyMarketSnapshot(); await detectMarketSignals(); };
     void runAnalytics().catch((error) => console.error('market analytics failed', error));
     analyticsTimer = setInterval(() => void runAnalytics().catch((error) => console.error('market analytics failed', error)), 60 * 60 * 1000);
   }
