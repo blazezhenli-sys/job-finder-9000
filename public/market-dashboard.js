@@ -178,13 +178,17 @@
       const zoneX = grouped.rows.length < 2 ? left : Math.max(left, x(index) - step / 2);
       const zoneWidth = grouped.rows.length < 2 ? plotWidth : Math.min(step, width - right - zoneX);
       const lines = [String(entry.period).slice(0, 10)];
+      let stack = 0;
+      const segments = [];
       if (field === 'volume' && observedTotal(entry) > 0) lines.push('Total observed: ' + observedTotal(entry).toLocaleString());
       entry.chartKeys.forEach((key) => {
         const raw = valuesFor(entry, key);
         const value = field === 'share' ? (entry.total ? raw / entry.total : 0) : raw;
+        segments.push({ key, top: y(stack + value), bottom: y(stack) });
+        stack += value;
         if (raw > 0) lines.push(label(key === '__remaining' ? 'Remaining' : key) + ': ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()));
       });
-      return '<rect x="' + zoneX + '" y="' + top + '" width="' + zoneWidth + '" height="' + plotHeight + '" class="period-hover-zone" data-tooltip="' + esc(lines.join('\n')) + '"></rect>';
+      return '<rect x="' + zoneX + '" y="' + top + '" width="' + zoneWidth + '" height="' + plotHeight + '" class="period-hover-zone" data-segments="' + esc(JSON.stringify(segments)) + '" data-tooltip="' + esc(lines.join('\n')) + '"></rect>';
     }).join('');
     const labels = grouped.rows.filter((entry, index) => index === 0 || index === grouped.rows.length - 1 || index % Math.max(1, Math.floor(grouped.rows.length / 4)) === 0).map((entry) => {
       const index = grouped.periods.indexOf(entry.period);
@@ -299,6 +303,17 @@
     document.querySelectorAll('.market-sector-key').forEach((button) => button.addEventListener('click', () => { state.focus = state.focus === button.dataset.sector ? '' : button.dataset.sector; persist(); render(data, currentData); }));
     document.querySelectorAll('.chart-sector').forEach((sector) => sector.addEventListener('click', () => openListingsForDimension(sector.dataset.sector)));
     document.querySelectorAll('.chart-point').forEach((point) => point.addEventListener('click', () => openListingsForDimension(point.dataset.sector)));
+    document.querySelectorAll('.period-hover-zone').forEach((zone) => zone.addEventListener('click', (event) => {
+      const svg = zone.ownerSVGElement;
+      const transform = svg?.getScreenCTM();
+      if (!transform) return;
+      const point = svg.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      const local = point.matrixTransform(transform.inverse());
+      const segment = JSON.parse(zone.dataset.segments || '[]').find((item) => local.y >= item.top && local.y <= item.bottom);
+      if (segment) openListingsForDimension(segment.key);
+    }));
     document.querySelectorAll('.market-evidence-button').forEach((button) => button.addEventListener('click', () => openEvidence(button.dataset.sector)));
     document.querySelectorAll('.market-signal-evidence-button').forEach((button) => button.addEventListener('click', () => openSignalEvidence(button.dataset.signalId).catch(console.error)));
   }
