@@ -3,12 +3,23 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Signal / hiring monitor</title>
+  <script>
+    (() => {
+      try {
+        const savedTheme = localStorage.getItem('signal-hiring-theme');
+        const theme = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch {
+        document.documentElement.dataset.theme = 'light';
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">✦</span><span>signal<span class="muted">/</span>hiring</span></div>
-    <div class="live"><span id="live-dot" class="dot"></span><span id="live-label">connecting</span></div>
+    <div class="topbar-actions"><button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><span class="theme-toggle-icon" aria-hidden="true">☾</span><span class="theme-toggle-label">Dark mode</span></button><div class="live"><span id="live-dot" class="dot"></span><span id="live-label">connecting</span></div></div>
   </header>
   <main class="shell">
     <nav class="tabs" aria-label="Sections">
