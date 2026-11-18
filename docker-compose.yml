@@ -3,8 +3,19 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    command: ["node", "dist/server-entry.js"]
     ports:
       - "${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["node", "dist/worker-entry.js"]
+    environment:
+      DB_POOL_MAX: "${WORKER_DB_POOL_MAX:-6}"
     depends_on:
       db:
         condition: service_healthy
