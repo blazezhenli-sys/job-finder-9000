@@ -121,7 +121,10 @@
         return cumulative[index] - value;
       });
       const path = 'M ' + grouped.rows.map((entry, index) => x(index) + ' ' + tops[index]).join(' L ') + ' L ' + grouped.rows.map((entry, index) => x(grouped.rows.length - 1 - index) + ' ' + y(bottomValues[grouped.rows.length - 1 - index])).join(' L ') + ' Z';
-      return '<path d="' + path + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82"><title>' + esc(label(key === '__other' ? 'Other' : key)) + '</title></path>';
+      const shape = grouped.rows.length === 1
+        ? '<rect x="' + left + '" y="' + tops[0] + '" width="' + plotWidth + '" height="' + Math.max(2, y(bottomValues[0]) - tops[0]) + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">'
+        : '<path d="' + path + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">';
+      return shape + '<title>' + esc(label(key === '__other' ? 'Other' : key)) + '</title>' + (grouped.rows.length === 1 ? '</rect>' : '</path>');
     }).join('') : '';
     const hoverPoints = grouped.rows.map((entry, index) => {
       let stack = 0;
@@ -148,6 +151,7 @@
     const plotWidth = width - left - right, plotHeight = height - top - bottom;
     const maxValue = Math.max(1, ...grouped.rows.map((entry) => [...entry.values.values()].reduce((sum, row) => sum + Number(row.new_listings || 0) + Number(row.removed_listings || 0), 0)));
     const barWidth = Math.max(4, plotWidth / Math.max(1, grouped.rows.length) * .55);
+    const hasFlow = grouped.rows.some((entry) => [...entry.values.values()].some((row) => Number(row.new_listings || 0) > 0 || Number(row.removed_listings || 0) > 0));
     const bars = grouped.rows.map((entry, index) => {
       const added = [...entry.values.values()].reduce((sum, row) => sum + Number(row.new_listings || 0), 0);
       const removed = [...entry.values.values()].reduce((sum, row) => sum + Number(row.removed_listings || 0), 0);
@@ -161,7 +165,7 @@
       const x = left + (grouped.rows.length < 2 ? plotWidth / 2 : (index / (grouped.rows.length - 1)) * plotWidth);
       return '<text x="' + x + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(String(entry.period).slice(0, 10)) + '</text>';
     }).join('');
-    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="New and removed openings"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight / 2) + '" y2="' + (top + plotHeight / 2) + '" class="chart-axis"></line>' + bars + labels + '</svg><div class="market-flow-legend"><span><i class="flow-new-swatch"></i>New observed</span><span><i class="flow-removed-swatch"></i>Removed observed</span></div></div>';
+    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="New and removed openings"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight / 2) + '" y2="' + (top + plotHeight / 2) + '" class="chart-axis"></line>' + bars + (hasFlow ? '' : '<text x="' + (width / 2) + '" y="' + (top + plotHeight / 2 - 8) + '" text-anchor="middle">No new or removed openings recorded</text>') + labels + '</svg><div class="market-flow-legend"><span><i class="flow-new-swatch"></i>New observed</span><span><i class="flow-removed-swatch"></i>Removed observed</span></div></div>';
   }
 
   function renderRankings(data) {
