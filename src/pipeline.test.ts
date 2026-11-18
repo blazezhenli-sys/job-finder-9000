@@ -12,12 +12,20 @@ const rules: DetectionRule[] = [
   { id: '2', name: 'Contract', pattern: 'contractor', match_type: 'phrase', category: 'contract', weight: 10, negative: false, enabled: true },
   { id: '3', name: 'Closed', pattern: 'hiring is closed', match_type: 'phrase', category: 'negative', weight: 0, negative: true, enabled: true }
 ];
-const taiwanPreferences = { ...defaultPreferences, locationProfile: { baseLocation: 'Taiwan', timeZone: 'Asia/Taipei', utcOffset: 8, preferredRegions: ['Taiwan', 'APAC', 'Asia', 'Worldwide'] } };
+const relevancePreferences = {
+  ...defaultPreferences,
+  technologyTerms: ['typescript'],
+  roleTerms: ['backend engineer'],
+  remoteTerms: ['remote'],
+  internationalTerms: ['worldwide'],
+  contractTerms: ['contractor'],
+  contactTerms: ['dm me']
+};
 
 describe('hiring signal pipeline', () => {
   it('normalizes punctuation and whitespace', () => expect(normalizeText('  We\u2019re   hiring\nnow  ')).toBe("We're hiring now"));
   it('matches configured phrases case-insensitively and scores explicit evidence', () => {
-    const result = analyzePost(post, rules, defaultPreferences);
+    const result = analyzePost(post, rules, relevancePreferences);
     expect(result.blocked).toBe(false);
     expect(result.matchedRules.map((rule) => rule.name)).toEqual(['Hiring', 'Contract']);
     expect(result.technologies).toContain('typescript');
@@ -43,11 +51,11 @@ describe('hiring signal pipeline', () => {
   it('does not notify recovered old posts unless enabled', () => {
     const firstSeen = new Date('2026-11-16T10:00:00Z');
     const published = new Date('2026-11-16T08:00:00Z');
-    const analysis = analyzePost(post, rules, defaultPreferences);
-    expect(notificationEligible(analysis, true, { ...defaultPreferences, notifyRecovered: false })).toBe(false);
-    expect(notificationEligible(analysis, true, { ...defaultPreferences, notifyRecovered: true })).toBe(true);
-    expect(notificationEligible({ ...analysis, personalRelevance: 20, score: 20 }, false, { ...defaultPreferences, notifyRecovered: true })).toBe(false);
-    expect(notificationEligible({ ...analysis, personalRelevance: 90, score: 90 }, false, { ...defaultPreferences, minimumNotificationScore: 95 })).toBe(false);
+    const analysis = analyzePost(post, rules, relevancePreferences);
+    expect(notificationEligible(analysis, true, { ...relevancePreferences, notifyRecovered: false })).toBe(false);
+    expect(notificationEligible(analysis, true, { ...relevancePreferences, notifyRecovered: true })).toBe(true);
+    expect(notificationEligible({ ...analysis, signalQuality: 20 }, false, { ...defaultPreferences, notifyRecovered: true })).toBe(false);
+    expect(notificationEligible({ ...analysis, personalRelevance: 0, score: 0 }, false, { ...defaultPreferences, minimumNotificationSignalQuality: 101 })).toBe(false);
   });
   it('suppresses templated job-board advertisements while retaining them for review', () => {
     const result = analyzePost({ ...post, text: '🚀 New Remote Job Alert! Position: Software Engineer Company: Example Corp Location: USA Apply now: https://jobs.example.com/1 #RemoteJobs #Hiring' }, rules, defaultPreferences);
@@ -55,9 +63,9 @@ describe('hiring signal pipeline', () => {
     expect(result.suppressed).toBe(true);
     expect(result.signalQuality).toBeLessThan(20);
   });
-  it('recognizes concrete software development demand', () => {
+  it('recognizes a concrete service request across domains', () => {
     const result = analyzePost({ ...post, text: 'Does anyone know a reliable freelance programmer to build an internal dashboard and integrate Stripe? DM me.' }, rules, defaultPreferences);
-    expect(result.category).toBe('software_request');
+    expect(result.category).toBe('service_request');
     expect(result.contactMethods.some((method) => method.type === 'dm')).toBe(true);
   });
   it('uses exact registry evidence to suppress syndicated listings without matching a company name', () => {
@@ -67,21 +75,21 @@ describe('hiring signal pipeline', () => {
     expect(result.classificationReasons.join(' ')).toContain('NearSkill');
   });
   it('extracts explicit work mode, location constraints, and timezone evidence', () => {
-    const worldwide = analyzePost({ ...post, text: "We're hiring remotely worldwide; Taiwan and UTC+8 overlap are welcome." }, rules, taiwanPreferences);
+    const worldwide = analyzePost({ ...post, text: "We're hiring remotely worldwide; Taiwan and UTC+8 overlap are welcome." }, rules, defaultPreferences);
     expect(worldwide.locationSignals.workMode).toBe('remote');
     expect(worldwide.locationSignals.locations).toContain('Taiwan');
     expect(worldwide.locationSignals.constraint).toBe('allowed');
     expect(worldwide.locationSignals.timezoneRequirements).toContain('UTC+8');
-    expect(worldwide.locationFit).toBe('excellent');
+    expect(worldwide.locationFit).toBe('unknown');
 
-    const restricted = analyzePost({ ...post, text: "We're hiring a backend engineer, remote in the United States only. No visa sponsorship." }, rules, taiwanPreferences);
+    const restricted = analyzePost({ ...post, text: "We're hiring a backend engineer, remote in the United States only. No visa sponsorship." }, rules, defaultPreferences);
     expect(restricted.locationSignals.workMode).toBe('remote');
     expect(restricted.locationSignals.locations).toContain('United States');
     expect(restricted.locationSignals.constraint).toBe('restricted');
-    expect(restricted.locationFit).toBe('poor');
+    expect(restricted.locationFit).toBe('unknown');
 
-    const apac = analyzePost({ ...post, text: "We're hiring a remote engineer. APAC hours preferred." }, rules, taiwanPreferences);
-    expect(apac.locationFit).toBe('excellent');
+    const apac = analyzePost({ ...post, text: "We're hiring a remote engineer. APAC hours preferred." }, rules, defaultPreferences);
+    expect(apac.locationFit).toBe('unknown');
 
     const arbitraryCountry = analyzePost({ ...post, text: "We're hiring remote - Jordan. Applicants must already have work authorization." }, rules, defaultPreferences);
     expect(arbitraryCountry.locationSignals.locations).toContain('Jordan');
@@ -92,11 +100,16 @@ describe('hiring signal pipeline', () => {
     expect(extractLocationSignals('Taipei, Taiwan').regions).toEqual(expect.arrayContaining(['Asia', 'APAC']));
     expect(extractLocationSignals('Remote worldwide').regions).toContain('Worldwide');
   });
-  it('evaluates location fit against whichever profile is supplied', () => {
-    const berlinPreferences = { ...defaultPreferences, locationProfile: { baseLocation: 'Berlin', timeZone: 'Europe/Berlin', utcOffset: 1, preferredRegions: ['Europe'] } };
-    const berlin = analyzePost({ ...post, text: "We're hiring onsite in Berlin." }, rules, berlinPreferences);
-    expect(berlin.locationFit).toBe('excellent');
-    const taiwan = analyzePost({ ...post, text: "We're hiring onsite in Taiwan." }, rules, berlinPreferences);
-    expect(taiwan.locationFit).toBe('poor');
+  it('keeps location as source evidence without changing relevance or notifications', () => {
+    const berlin = analyzePost({ ...post, text: "We're hiring a remote backend engineer and TypeScript contractor in Berlin." }, rules, relevancePreferences);
+    const taiwan = analyzePost({ ...post, text: "We're hiring a remote backend engineer and TypeScript contractor in Taiwan." }, rules, relevancePreferences);
+    expect(berlin.locationSignals.locations).toContain('Berlin');
+    expect(taiwan.locationSignals.locations).toContain('Taiwan');
+    expect(berlin.locationFit).toBe('unknown');
+    expect(taiwan.locationFit).toBe('unknown');
+    expect(berlin.personalRelevance).toBe(taiwan.personalRelevance);
+    const notificationPreferences = { ...relevancePreferences, minimumNotificationScore: 45, minimumNotificationPersonalRelevance: 45 };
+    expect(notificationEligible(berlin, false, notificationPreferences)).toBe(true);
+    expect(notificationEligible(taiwan, false, notificationPreferences)).toBe(true);
   });
 });

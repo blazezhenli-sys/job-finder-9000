@@ -1,4 +1,4 @@
-import { evaluateLocationFit, extractLocationSignals, scorePreferenceEvidence } from '../pipeline.js';
+import { extractLocationSignals, scorePreferenceEvidence } from '../pipeline.js';
 import type { ListingAnalysis, LocationSignals, NormalizedJobListing, Preferences } from '../types.js';
 
 export function listingLocationSignals(listing: Pick<NormalizedJobListing, 'location' | 'secondaryLocations' | 'geographicRestrictions' | 'remoteMode' | 'description'>): LocationSignals {
@@ -22,8 +22,7 @@ export function listingLocationSignals(listing: Pick<NormalizedJobListing, 'loca
 
 export function analyzeListing(listing: NormalizedJobListing, preferences: Preferences): ListingAnalysis {
   const locationSignals = listingLocationSignals(listing);
-  const location = evaluateLocationFit(locationSignals, preferences);
   const text = [listing.title, listing.description, listing.department, listing.team].filter(Boolean).join(' ');
   const relevance = scorePreferenceEvidence(text, preferences);
-  return { technologies: relevance.technologies, employmentType: listing.employmentType ?? '', personalRelevance: relevance.score, relevanceBreakdown: relevance.breakdown, locationSignals, locationFit: location.fit, locationFitScore: location.score, locationFitReasons: location.reasons };
+  return { technologies: relevance.technologies, employmentType: listing.employmentType ?? '', personalRelevance: relevance.score, relevanceBreakdown: relevance.breakdown, locationSignals, locationFit: 'unknown', locationFitScore: 0, locationFitReasons: [] };
 }

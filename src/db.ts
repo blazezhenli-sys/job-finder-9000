@@ -98,27 +98,9 @@ const defaultRules = [
   ['Hiring for a role', 'hiring (for|a|an)', 'regex', 'hiring', 12, false],
   ['We are hiring', "we're hiring|we are hiring", 'regex', 'hiring', 20, false],
   ['I am hiring', "i'm hiring|i am hiring", 'regex', 'hiring', 18, false],
-  ['Looking for an engineer', 'looking for (a |an )?(software )?engineer', 'regex', 'role', 14, false],
-  ['Looking for a developer', 'looking for (a |an )?(software )?developer', 'regex', 'role', 14, false],
-  ['Founding engineer', 'founding engineer', 'phrase', 'role', 18, false],
   ['Join our team', 'join our team', 'phrase', 'hiring', 12, false],
-  ['Need a contractor', 'need a contractor', 'phrase', 'contract', 16, false],
-  ['Contractor mention', 'contractor', 'phrase', 'contract', 8, false],
-  ['Freelance help', 'looking for freelance help', 'phrase', 'contract', 16, false],
-  ['Freelance mention', 'freelance', 'phrase', 'contract', 8, false],
   ['DM me if interested', 'dm me if interested', 'phrase', 'contact', 10, false],
-  ['Know good developers', 'know any good developers', 'phrase', 'contact', 12, false],
-  ['Expanding engineering team', 'expanding our engineering team', 'phrase', 'hiring', 18, false],
-  ['Hiring remote', 'hiring remote', 'phrase', 'remote', 12, false],
-  ['Looking for someone to build', 'looking for someone to build', 'phrase', 'role', 12, false],
-  ['Need an engineer or developer', 'need (a |an )?(backend |frontend |full[- ]stack )?(engineer|developer)', 'regex', 'role', 14, false],
-  ['Seeking an engineer or developer', 'seeking (a |an )?(engineer|developer)', 'regex', 'role', 14, false],
-  ['Engineer wanted', '(engineer|developer) wanted|engineering role', 'regex', 'role', 12, false],
-  ['Engineering hire', 'looking for an engineering hire', 'phrase', 'role', 14, false],
-  ['Backend engineer role', 'backend engineer', 'phrase', 'role', 10, false],
-  ['Software engineer role', 'software engineer', 'phrase', 'role', 10, false],
   ['Job opening', 'job opening|open role', 'regex', 'hiring', 10, false],
-  ['Infrastructure help', 'need help with our infrastructure', 'phrase', 'technology', 16, false],
   ['Who is hiring thread', 'who is hiring', 'phrase', 'hiring', 10, false],
   ['Hiring closed', 'hiring (is )?(closed|over)|no longer hiring|position (is )?filled', 'regex', 'negative', 0, true],
   ['Historical announcement', 'last year we (were )?hiring|previously hired|we hired', 'regex', 'negative', 0, true]
@@ -128,21 +110,18 @@ export const defaultPreferences: Preferences = {
   minimumNotificationScore: 55,
   minimumNotificationSignalQuality: 60,
   minimumNotificationPersonalRelevance: 55,
-  minimumNotificationLocationFitScore: 40,
   listingsNotificationsEnabled: true,
   minimumListingRelevance: 55,
-  minimumListingLocationFitScore: 40,
   notificationsEnabled: true,
   notifyRecovered: config.notifyRecovered,
-  technologyTerms: ['typescript', 'javascript', 'node.js', 'nodejs', 'python', 'backend', 'full-stack', 'full stack', 'infrastructure', 'devops', 'react', 'postgresql', 'kubernetes'],
-  roleTerms: ['software engineer', 'backend engineer', 'full-stack engineer', 'developer', 'engineering hire', 'founding engineer'],
-  remoteTerms: ['remote', 'distributed', 'work from anywhere'],
-  internationalTerms: ['worldwide', 'anywhere in the world', 'international', 'global', 'timezone overlap', 'taiwan'],
-  contractTerms: ['contract', 'contractor', 'freelance', 'consulting', 'part-time'],
-  contactTerms: ['dm me', 'direct message', 'email me', 'reach out', 'founder', 'hiring manager'],
+  technologyTerms: [],
+  roleTerms: [],
+  remoteTerms: [],
+  internationalTerms: [],
+  contractTerms: [],
+  contactTerms: [],
   weights: { hiring: 20, role: 18, technology: 28, remote: 12, international: 8, contract: 10, contact: 8 },
   heuristics: { ...defaultHeuristics },
-  locationProfile: { baseLocation: '', timeZone: 'UTC', utcOffset: 0, preferredRegions: [] }
 };
 
 async function seedDefaults(client: pg.PoolClient) {
@@ -167,13 +146,17 @@ async function seedDefaults(client: pg.PoolClient) {
 
 export async function getPreferences(): Promise<Preferences> {
   const result = await pool.query('SELECT value FROM app_settings WHERE key = $1', ['preferences']);
-  const saved = result.rows[0]?.value ?? {};
+  const stored = result.rows[0]?.value ?? {};
+  const saved = { ...stored };
+  delete saved.locationProfile;
+  delete saved.minimumNotificationLocationFitScore;
+  delete saved.minimumListingLocationFitScore;
+  for (const key of ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumListingRelevance', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'heuristics']) delete saved[key];
   return {
     ...defaultPreferences,
     ...saved,
     weights: { ...defaultPreferences.weights, ...(saved.weights ?? {}) },
-    heuristics: { ...defaultPreferences.heuristics, ...(saved.heuristics ?? {}) },
-    locationProfile: { ...defaultPreferences.locationProfile, ...(saved.locationProfile ?? {}) }
+    heuristics: { ...defaultPreferences.heuristics, ...(saved.heuristics ?? {}) }
   };
 }
 

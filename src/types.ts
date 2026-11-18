@@ -1,6 +1,6 @@
 export type SourceName = 'bluesky' | 'hacker_news' | 'mastodon' | 'reddit';
 export type OpportunityStatus = 'unread' | 'interesting' | 'dismissed' | 'contacted';
-export type SignalCategory = 'direct_hiring' | 'software_request' | 'employee_referral' | 'firsthand_announcement' | 'aggregated_listing' | 'uncertain';
+export type SignalCategory = 'direct_hiring' | 'service_request' | 'employee_referral' | 'firsthand_announcement' | 'aggregated_listing' | 'uncertain';
 export type AuthorClassification = 'unknown' | 'aggregator' | 'employer' | 'legitimate_employer';
 export type WorkMode = 'remote' | 'hybrid' | 'onsite' | 'unknown';
 export type LocationConstraint = 'allowed' | 'restricted' | 'unknown';
@@ -69,19 +69,12 @@ export interface LocationSignals {
   evidence: string[];
 }
 
-export interface LocationProfile {
-  baseLocation: string;
-  timeZone: string;
-  utcOffset: number;
-  preferredRegions: string[];
-}
-
 export interface HeuristicPreferences {
   activeDemandTerms: string[];
   firstPersonTerms: string[];
   directHiringTerms: string[];
-  softwareRequestTerms: string[];
-  softwareEvidenceTerms: string[];
+  serviceRequestTerms: string[];
+  serviceEvidenceTerms: string[];
   referralTerms: string[];
   automatedTemplateTerms: string[];
   selfPromotionTerms: string[];
@@ -113,7 +106,6 @@ export interface Preferences {
   minimumNotificationScore: number;
   minimumNotificationSignalQuality: number;
   minimumNotificationPersonalRelevance: number;
-  minimumNotificationLocationFitScore: number;
   notificationsEnabled: boolean;
   notifyRecovered: boolean;
   technologyTerms: string[];
@@ -124,10 +116,8 @@ export interface Preferences {
   contactTerms: string[];
   weights: Record<string, number>;
   heuristics: HeuristicPreferences;
-  locationProfile: LocationProfile;
   listingsNotificationsEnabled: boolean;
   minimumListingRelevance: number;
-  minimumListingLocationFitScore: number;
 }
 
 export interface JobBoard {

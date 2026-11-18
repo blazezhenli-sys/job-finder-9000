@@ -5,15 +5,13 @@ import { listingLocationSignals } from './pipeline.js';
 
 export function isEngineeringListing(specialties: string[]): boolean { return specialties.length > 0; }
 
-export type CompanyScoreInputs = { activeEngineering: number; newEngineering7d: number; contractListings: number; remoteListings: number; hasRecentActivity?: boolean };
+export type CompanyScoreInputs = { activeListings: number; newListings7d: number; hasRecentActivity?: boolean };
 
 export function calculateProspectScore(inputs: CompanyScoreInputs): { score: number; factors: Array<{ label: string; points: number; evidence: string }> } {
   const factors = [
-    { label: 'Active engineering openings', points: Math.min(30, inputs.activeEngineering * 5), evidence: `${inputs.activeEngineering} active engineering opening${inputs.activeEngineering === 1 ? '' : 's'}` },
-    { label: 'New engineering openings in 7 days', points: Math.min(25, inputs.newEngineering7d * 8), evidence: `${inputs.newEngineering7d} engineering opening${inputs.newEngineering7d === 1 ? '' : 's'} newly observed in 7 days` },
-    { label: 'Contract hiring', points: Math.min(20, inputs.contractListings * 10), evidence: `${inputs.contractListings} active contract listing${inputs.contractListings === 1 ? '' : 's'}` },
-    { label: 'Remote hiring', points: Math.min(10, inputs.remoteListings * 2), evidence: `${inputs.remoteListings} active remote listing${inputs.remoteListings === 1 ? '' : 's'}` },
-    { label: 'Recent monitoring activity', points: inputs.hasRecentActivity ? 5 : 0, evidence: inputs.hasRecentActivity ? 'Observed activity in the last 30 days' : 'No recent activity evidence' }
+    { label: 'Active openings', points: Math.min(30, inputs.activeListings * 3), evidence: `${inputs.activeListings} active opening${inputs.activeListings === 1 ? '' : 's'}` },
+    { label: 'New openings in 7 days', points: Math.min(50, inputs.newListings7d * 10), evidence: `${inputs.newListings7d} opening${inputs.newListings7d === 1 ? '' : 's'} newly observed in 7 days` },
+    { label: 'Recent monitoring activity', points: inputs.hasRecentActivity ? 20 : 0, evidence: inputs.hasRecentActivity ? 'Observed activity in the last 30 days' : 'No recent activity evidence' }
   ].filter((factor) => factor.points > 0);
   return { score: Math.min(100, factors.reduce((total, factor) => total + factor.points, 0)), factors };
 }
