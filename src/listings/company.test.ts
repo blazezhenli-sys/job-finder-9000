@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { calculateProspectScore, classifyEngineeringSpecialties, extractListingTechnologies, isEngineeringListing } from './company.js';
 
-describe('company engineering classification', () => {
+describe('company classification and activity scoring', () => {
   it('supports overlapping specialties from one listing', () => {
     const specialties = classifyEngineeringSpecialties({ title: 'Senior Full-stack Engineer', description: 'Build React interfaces and Node.js APIs.', department: '', team: '' });
     expect(specialties).toEqual(expect.arrayContaining(['full_stack', 'frontend', 'backend_api']));
@@ -19,8 +19,9 @@ describe('company engineering classification', () => {
   });
 
   it('keeps prospect scoring transparent and bounded', () => {
-    const result = calculateProspectScore({ activeEngineering: 4, newEngineering7d: 2, contractListings: 1, remoteListings: 3, hasRecentActivity: true });
-    expect(result.score).toBe(57);
-    expect(result.factors.map((factor) => factor.label)).toContain('Contract hiring');
+    const result = calculateProspectScore({ activeListings: 4, newListings7d: 2, hasRecentActivity: true });
+    expect(result.score).toBe(52);
+    expect(result.score).toBeLessThanOrEqual(100);
+    expect(result.factors.map((factor) => factor.label)).toEqual(expect.arrayContaining(['Active openings', 'New openings in 7 days', 'Recent monitoring activity']));
   });
 });

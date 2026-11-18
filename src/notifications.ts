@@ -11,7 +11,7 @@ async function deliverPostNotifications() {
   if (!preferences.notificationsEnabled) return;
   const pending = await pool.query(`SELECT n.*, o.text, o.score, o.matched_rules, o.score_breakdown, o.source, o.author_name, o.author_handle,
     o.source_url, o.published_at, o.first_seen_at, o.signal_category, o.signal_quality, o.personal_relevance,
-    o.classification_reasons, o.contact_methods, o.location_fit, o.location_fit_score, o.location_fit_reasons FROM notifications n JOIN opportunities o ON o.id = n.opportunity_id
+    o.classification_reasons, o.contact_methods FROM notifications n JOIN opportunities o ON o.id = n.opportunity_id
     WHERE n.status IN ('pending', 'failed') AND n.next_attempt_at <= now() ORDER BY n.created_at LIMIT 10`);
   if (!pending.rows.length) return;
   const transport = nodemailer.createTransport({ host: config.smtp.host, port: config.smtp.port, secure: config.smtp.secure, auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.password } : undefined });
@@ -21,12 +21,11 @@ async function deliverPostNotifications() {
       const breakdown = (notification.score_breakdown as { label: string; points: number; evidence: string[] }[]).map((item) => `${item.label} +${item.points} (${item.evidence.join(', ')})`).join('\n');
       const reasons = (notification.classification_reasons as string[] || []).join('; ');
       const contacts = (notification.contact_methods as { type: string; value: string }[] || []).map((item) => `${item.type}: ${item.value}`).join('\n') || 'No direct contact method detected';
-      const locationReasons = (notification.location_fit_reasons as string[] || []).join('; ');
       await transport.sendMail({
         from: config.smtp.from,
         to: config.smtp.recipient,
         subject: `[Hiring signal Q${notification.signal_quality}/R${notification.personal_relevance}] ${String(notification.text).slice(0, 64)}`,
-        text: `Hiring signal detected\n\nCategory: ${notification.signal_category}\nSignal quality: ${notification.signal_quality}/100\nPersonal relevance: ${notification.personal_relevance}/100\nLocation fit: ${notification.location_fit} (${notification.location_fit_score}/100)\nLocation fit explanation: ${locationReasons || 'No explicit location-fit evidence'}\nSource: ${notification.source}\nAuthor: ${notification.author_name} (${notification.author_handle})\nLink: ${notification.source_url}\nPublished: ${notification.published_at}\nDiscovered: ${notification.first_seen_at}\n\nWhy it was classified:\n${reasons || 'No additional classification notes'}\n\nContact methods:\n${contacts}\n\nMatched rules:\n${matched}\n\nPersonal relevance explanation:\n${breakdown}\n\n${notification.text}`
+        text: `Hiring signal detected\n\nCategory: ${notification.signal_category}\nSignal quality: ${notification.signal_quality}/100\nPersonal relevance: ${notification.personal_relevance}/100\nSource: ${notification.source}\nAuthor: ${notification.author_name} (${notification.author_handle})\nLink: ${notification.source_url}\nPublished: ${notification.published_at}\nDiscovered: ${notification.first_seen_at}\n\nWhy it was classified:\n${reasons || 'No additional classification notes'}\n\nContact methods:\n${contacts}\n\nMatched rules:\n${matched}\n\nPersonal relevance explanation:\n${breakdown}\n\n${notification.text}`
       });
       await pool.query(`UPDATE notifications SET status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = NULL WHERE id = $1`, [notification.id]);
       await pool.query(`UPDATE opportunities SET notified_at = now() WHERE id = $1`, [notification.opportunity_id]);
@@ -42,7 +41,7 @@ async function deliverListingNotifications() {
   const preferences = await getPreferences();
   if (!preferences.listingsNotificationsEnabled) return;
   const pending = await pool.query(`SELECT n.*, l.title, l.description, l.personal_relevance, l.relevance_breakdown, l.location, l.remote_mode,
-    l.location_fit, l.location_fit_score, l.location_fit_reasons, l.application_url, l.original_url, l.source_updated_at,
+    l.application_url, l.original_url, l.source_updated_at,
     b.provider, b.board_identifier, e.name AS employer_name FROM listing_notifications n
     JOIN job_listings l ON l.id=n.listing_id JOIN job_boards b ON b.id=l.board_id JOIN employers e ON e.id=b.employer_id
     WHERE n.status IN ('pending','failed') AND n.next_attempt_at <= now() AND l.is_active=true
@@ -52,13 +51,12 @@ async function deliverListingNotifications() {
   for (const notification of pending.rows) {
     try {
       const breakdown = (notification.relevance_breakdown as { label: string; points: number; evidence: string[] }[] || []).map((item) => `${item.label} +${item.points} (${item.evidence.join(', ')})`).join('\n');
-      const reasons = (notification.location_fit_reasons as string[] || []).join('; ');
       const link = notification.application_url || notification.original_url;
       await transport.sendMail({
         from: config.smtp.from,
         to: config.smtp.recipient,
-        subject: `[Listing R${notification.personal_relevance}/L${notification.location_fit_score}] ${notification.title} · ${notification.employer_name}`,
-        text: `Job listing detected\n\n${notification.title}\nEmployer: ${notification.employer_name}\nProvider: ${notification.provider}\nLocation: ${notification.location || 'Not specified'}\nWork mode: ${notification.remote_mode}\nLocation fit: ${notification.location_fit} (${notification.location_fit_score}/100)\nLocation explanation: ${reasons || 'No explicit location-fit evidence'}\nPersonal relevance: ${notification.personal_relevance}/100\nSource: ${link}\nUpdated: ${notification.source_updated_at || 'unknown'}\n\nRelevance breakdown:\n${breakdown || 'No additional scoring details'}\n\n${notification.description}`
+        subject: `[Listing R${notification.personal_relevance}] ${notification.title} · ${notification.employer_name}`,
+        text: `Job listing detected\n\n${notification.title}\nEmployer: ${notification.employer_name}\nProvider: ${notification.provider}\nLocation: ${notification.location || 'Not specified'}\nWork mode: ${notification.remote_mode}\nPersonal relevance: ${notification.personal_relevance}/100\nSource: ${link}\nUpdated: ${notification.source_updated_at || 'unknown'}\n\nRelevance breakdown:\n${breakdown || 'No additional scoring details'}\n\n${notification.description}`
       });
       await pool.query(`UPDATE listing_notifications SET status='sent', sent_at=now(), attempts=attempts+1, last_error=NULL WHERE id=$1`, [notification.id]);
     } catch (error) {

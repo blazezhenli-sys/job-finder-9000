@@ -273,7 +273,7 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
       GROUP BY employer_id
     )
     SELECT stats.*, e.name AS employer_name,
-      COALESCE((SELECT jsonb_agg(l.id) FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=stats.employer_id AND l.is_active AND l.first_observed_at >= ($1::date - interval '6 days') AND l.first_observed_at <= ($1::date + interval '1 day') AND jsonb_array_length(COALESCE(l.engineering_specialties,'[]'::jsonb)) > 0), '[]'::jsonb) AS supporting_listing_ids
+      COALESCE((SELECT jsonb_agg(l.id) FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=stats.employer_id AND l.is_active AND l.first_observed_at >= ($1::date - interval '6 days') AND l.first_observed_at <= ($1::date + interval '1 day')), '[]'::jsonb) AS supporting_listing_ids
     FROM stats JOIN employers e ON e.id=stats.employer_id
     WHERE recent_new >= 3 AND baseline_days >= 28 AND recent_days >= 5
       AND recent_new >= GREATEST(3, ((baseline_new::numeric / 7) * 3))`, [snapshotDate]);
@@ -281,8 +281,8 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
     const baselineWeekly = Number(row.baseline_new) / 7;
     const signalKey = `company:${row.employer_id}:hiring_surge`;
     await pool.query(`INSERT INTO market_signals (signal_key, scope, employer_id, signal_type, dimension, period_start, period_end, baseline_value, observed_value, change_ratio, sample_size, explanation, data_quality, supporting_listing_ids)
-      VALUES ($1,'company',$2,'hiring_surge','engineering',$3::date,$4::date,$5,$6,$7,$8,$9,$10,$11)
-      ON CONFLICT (signal_key) DO UPDATE SET period_start=EXCLUDED.period_start, period_end=EXCLUDED.period_end, baseline_value=EXCLUDED.baseline_value, observed_value=EXCLUDED.observed_value, change_ratio=EXCLUDED.change_ratio, sample_size=EXCLUDED.sample_size, explanation=EXCLUDED.explanation, data_quality=EXCLUDED.data_quality, supporting_listing_ids=EXCLUDED.supporting_listing_ids, last_seen_at=now(), status='active'`, [signalKey, row.employer_id, new Date(new Date(snapshotDate).getTime() - 6 * 86400000).toISOString().slice(0, 10), snapshotDate, baselineWeekly, row.recent_new, baselineWeekly ? Number(row.recent_new) / baselineWeekly : null, Number(row.baseline_days), `${row.employer_name} observed ${row.recent_new} new engineering openings in the last 7 days versus a baseline of ${baselineWeekly.toFixed(1)} per week.`, 'Requires at least 28 successful baseline observation days.', JSON.stringify(row.supporting_listing_ids ?? [])]);
+      VALUES ($1,'company',$2,'hiring_surge','all',$3::date,$4::date,$5,$6,$7,$8,$9,$10,$11)
+      ON CONFLICT (signal_key) DO UPDATE SET dimension=EXCLUDED.dimension, period_start=EXCLUDED.period_start, period_end=EXCLUDED.period_end, baseline_value=EXCLUDED.baseline_value, observed_value=EXCLUDED.observed_value, change_ratio=EXCLUDED.change_ratio, sample_size=EXCLUDED.sample_size, explanation=EXCLUDED.explanation, data_quality=EXCLUDED.data_quality, supporting_listing_ids=EXCLUDED.supporting_listing_ids, last_seen_at=now(), status='active'`, [signalKey, row.employer_id, new Date(new Date(snapshotDate).getTime() - 6 * 86400000).toISOString().slice(0, 10), snapshotDate, baselineWeekly, row.recent_new, baselineWeekly ? Number(row.recent_new) / baselineWeekly : null, Number(row.baseline_days), `${row.employer_name} observed ${row.recent_new} new openings in the last 7 days versus a baseline of ${baselineWeekly.toFixed(1)} per week.`, 'Requires at least 28 successful baseline observation days.', JSON.stringify(row.supporting_listing_ids ?? [])]);
   }
 
   const specialtySurges = await pool.query(`WITH observed AS (
@@ -313,10 +313,8 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
 
   const companyBehavior = await pool.query(`WITH stats AS (
       SELECT employer_id,
-        avg(active_engineering) FILTER (WHERE snapshot_date >= ($1::date - interval '6 days') AND successful_boards > 0) AS recent_engineering,
-        avg(active_engineering) FILTER (WHERE snapshot_date >= ($1::date - interval '34 days') AND snapshot_date < ($1::date - interval '6 days') AND successful_boards > 0) AS baseline_engineering,
-        avg(contract_listings) FILTER (WHERE snapshot_date >= ($1::date - interval '6 days') AND successful_boards > 0) AS recent_contract,
-        avg(contract_listings) FILTER (WHERE snapshot_date >= ($1::date - interval '34 days') AND snapshot_date < ($1::date - interval '6 days') AND successful_boards > 0) AS baseline_contract,
+        avg(active_listings) FILTER (WHERE snapshot_date >= ($1::date - interval '6 days') AND successful_boards > 0) AS recent_listings,
+        avg(active_listings) FILTER (WHERE snapshot_date >= ($1::date - interval '34 days') AND snapshot_date < ($1::date - interval '6 days') AND successful_boards > 0) AS baseline_listings,
         count(*) FILTER (WHERE snapshot_date >= ($1::date - interval '6 days') AND successful_boards > 0)::int AS recent_days,
         count(*) FILTER (WHERE snapshot_date >= ($1::date - interval '34 days') AND snapshot_date < ($1::date - interval '6 days') AND successful_boards > 0)::int AS baseline_days
       FROM company_daily_metrics
@@ -327,21 +325,13 @@ export async function detectMarketSignals(snapshotDate = isoDate(new Date())) {
     FROM stats JOIN employers e ON e.id=stats.employer_id
     WHERE baseline_days >= 21 AND recent_days >= 5`, [snapshotDate]);
   for (const row of companyBehavior.rows) {
-    const recentEngineering = Number(row.recent_engineering || 0);
-    const baselineEngineering = Number(row.baseline_engineering || 0);
-    const recentContract = Number(row.recent_contract || 0);
-    const baselineContract = Number(row.baseline_contract || 0);
-    if (recentContract >= 1 && baselineContract < 1) {
+    const recentListings = Number(row.recent_listings || 0);
+    const baselineListings = Number(row.baseline_listings || 0);
+    if (baselineListings >= 5 && recentListings <= baselineListings * 0.5) {
       await pool.query(`INSERT INTO market_signals (signal_key, scope, employer_id, signal_type, dimension, period_start, period_end, baseline_value, observed_value, change_ratio, sample_size, explanation, data_quality)
-        VALUES ($1,'company',$2,'contract_hiring_start','employment_type',$3::date,$4::date,$5,$6,NULL,$7,$8,$9)
-        ON CONFLICT (signal_key) DO UPDATE SET baseline_value=EXCLUDED.baseline_value, observed_value=EXCLUDED.observed_value, sample_size=EXCLUDED.sample_size, explanation=EXCLUDED.explanation, data_quality=EXCLUDED.data_quality, last_seen_at=now(), status='active'`,
-      [`company:${row.employer_id}:contract_hiring_start`, row.employer_id, new Date(new Date(snapshotDate).getTime() - 6 * 86400000).toISOString().slice(0, 10), snapshotDate, baselineContract, recentContract, Number(row.baseline_days), `${row.employer_name} now has observable contract listings after a baseline with none.`, 'Requires at least 21 successful baseline observation days.']);
-    }
-    if (baselineEngineering >= 5 && recentEngineering <= baselineEngineering * 0.5) {
-      await pool.query(`INSERT INTO market_signals (signal_key, scope, employer_id, signal_type, dimension, period_start, period_end, baseline_value, observed_value, change_ratio, sample_size, explanation, data_quality)
-        VALUES ($1,'company',$2,'hiring_contraction','engineering',$3::date,$4::date,$5,$6,$7,$8,$9,$10)
-        ON CONFLICT (signal_key) DO UPDATE SET baseline_value=EXCLUDED.baseline_value, observed_value=EXCLUDED.observed_value, change_ratio=EXCLUDED.change_ratio, sample_size=EXCLUDED.sample_size, explanation=EXCLUDED.explanation, data_quality=EXCLUDED.data_quality, last_seen_at=now(), status='active'`,
-      [`company:${row.employer_id}:hiring_contraction`, row.employer_id, new Date(new Date(snapshotDate).getTime() - 6 * 86400000).toISOString().slice(0, 10), snapshotDate, baselineEngineering, recentEngineering, baselineEngineering ? recentEngineering / baselineEngineering : null, Number(row.baseline_days), `${row.employer_name} has ${recentEngineering.toFixed(1)} average active engineering openings versus ${baselineEngineering.toFixed(1)} in the preceding monitored period.`, 'Requires at least 21 successful baseline observation days.']);
+        VALUES ($1,'company',$2,'hiring_contraction','all',$3::date,$4::date,$5,$6,$7,$8,$9,$10)
+        ON CONFLICT (signal_key) DO UPDATE SET dimension=EXCLUDED.dimension, baseline_value=EXCLUDED.baseline_value, observed_value=EXCLUDED.observed_value, change_ratio=EXCLUDED.change_ratio, sample_size=EXCLUDED.sample_size, explanation=EXCLUDED.explanation, data_quality=EXCLUDED.data_quality, last_seen_at=now(), status='active'`,
+      [`company:${row.employer_id}:hiring_contraction`, row.employer_id, new Date(new Date(snapshotDate).getTime() - 6 * 86400000).toISOString().slice(0, 10), snapshotDate, baselineListings, recentListings, baselineListings ? recentListings / baselineListings : null, Number(row.baseline_days), `${row.employer_name} has ${recentListings.toFixed(1)} average active openings versus ${baselineListings.toFixed(1)} in the preceding monitored period.`, 'Requires at least 21 successful baseline observation days.']);
     }
   }
 

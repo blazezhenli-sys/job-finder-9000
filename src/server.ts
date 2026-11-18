@@ -176,18 +176,16 @@ app.get('/api/market/compare', async (request, reply) => {
 });
 
 app.get('/api/opportunities', async (request) => {
-  const query = request.query as { source?: string; status?: string; sort?: string; minScore?: string; minQuality?: string; minLocationFit?: string; signalCategory?: string; locationFit?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
+  const query = request.query as { source?: string; status?: string; sort?: string; minScore?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
   const conditions: string[] = [];
   const values: unknown[] = [];
   if (query.source && ['bluesky', 'hacker_news', 'mastodon', 'reddit'].includes(query.source)) { values.push(query.source); conditions.push(`source = $${values.length}`); }
   if (query.status && ['unread', 'interesting', 'dismissed', 'contacted'].includes(query.status)) { values.push(query.status); conditions.push(`status = $${values.length}`); }
   if (query.minScore && Number.isFinite(Number(query.minScore))) { values.push(Number(query.minScore)); conditions.push(`score >= $${values.length}`); }
   if (query.minQuality && Number.isFinite(Number(query.minQuality))) { values.push(Number(query.minQuality)); conditions.push(`signal_quality >= $${values.length}`); }
-  if (query.minLocationFit && Number.isFinite(Number(query.minLocationFit))) { values.push(Number(query.minLocationFit)); conditions.push(`location_fit_score >= $${values.length}`); }
-  if (query.signalCategory && ['direct_hiring', 'software_request', 'employee_referral', 'firsthand_announcement', 'aggregated_listing', 'uncertain'].includes(query.signalCategory)) { values.push(query.signalCategory); conditions.push(`signal_category = $${values.length}`); }
-  if (query.locationFit && ['excellent', 'good', 'possible', 'poor', 'unknown'].includes(query.locationFit)) { values.push(query.locationFit); conditions.push(`location_fit = $${values.length}`); }
+  if (query.signalCategory && ['direct_hiring', 'service_request', 'employee_referral', 'firsthand_announcement', 'aggregated_listing', 'uncertain'].includes(query.signalCategory)) { values.push(query.signalCategory); conditions.push(`signal_category = $${values.length}`); }
   if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`location_signals->>'workMode' = $${values.length}`); }
-  const sort = query.sort === 'location' ? 'location_fit_score DESC, signal_quality DESC, personal_relevance DESC, published_at DESC' : query.sort === 'score' ? 'personal_relevance DESC, signal_quality DESC, published_at DESC' : query.sort === 'quality' ? 'signal_quality DESC, personal_relevance DESC, published_at DESC' : query.sort === 'published' ? 'published_at DESC' : 'first_seen_at DESC';
+  const sort = query.sort === 'score' ? 'personal_relevance DESC, signal_quality DESC, published_at DESC' : query.sort === 'quality' ? 'signal_quality DESC, personal_relevance DESC, published_at DESC' : query.sort === 'published' ? 'published_at DESC' : 'first_seen_at DESC';
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
   const offset = Math.max(0, Number(query.offset) || 0);
   values.push(limit, offset);
@@ -222,7 +220,7 @@ function boardIdentifier(value: unknown, providerName: AtsProvider): string {
 }
 
 app.get('/api/listings', async (request) => {
-  const query = request.query as { provider?: string; status?: string; employer?: string; employerId?: string; department?: string; category?: string; specialty?: string; technology?: string; region?: string; country?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; maxAgeDays?: string; locationFit?: string; workMode?: string; minLocationFit?: string; sort?: string; active?: string; limit?: string; offset?: string };
+  const query = request.query as { provider?: string; status?: string; employer?: string; employerId?: string; department?: string; category?: string; specialty?: string; technology?: string; region?: string; country?: string; employmentType?: string; seniority?: string; location?: string; salaryCurrency?: string; minSalary?: string; maxAgeDays?: string; workMode?: string; sort?: string; active?: string; limit?: string; offset?: string };
   const values: unknown[] = []; const conditions: string[] = [];
   if (provider(query.provider)) { values.push(query.provider); conditions.push(`l.provider = $${values.length}`); }
   if (query.status && listingStatuses.includes(query.status as JobListingStatus)) { values.push(query.status); conditions.push(`l.status = $${values.length}`); }
@@ -240,11 +238,9 @@ app.get('/api/listings', async (request) => {
   if (query.salaryCurrency) { values.push(query.salaryCurrency.toUpperCase()); conditions.push(`l.compensation_currency = $${values.length}`); }
   if (query.minSalary && Number.isFinite(Number(query.minSalary)) && Number(query.minSalary) > 0) { values.push(Number(query.minSalary)); conditions.push(`COALESCE(l.compensation_max, l.compensation_min) >= $${values.length}`); }
   if (query.maxAgeDays && Number.isFinite(Number(query.maxAgeDays)) && Number(query.maxAgeDays) > 0) { values.push(Number(query.maxAgeDays)); conditions.push(`l.published_at IS NOT NULL AND l.published_at >= now() - ($${values.length}::text || ' days')::interval`); }
-  if (query.locationFit && ['excellent', 'good', 'possible', 'poor', 'unknown'].includes(query.locationFit)) { values.push(query.locationFit); conditions.push(`l.location_fit = $${values.length}`); }
   if (query.workMode && ['remote', 'hybrid', 'onsite', 'unknown'].includes(query.workMode)) { values.push(query.workMode); conditions.push(`l.remote_mode = $${values.length}`); }
-  if (query.minLocationFit && Number.isFinite(Number(query.minLocationFit)) && Number(query.minLocationFit) > 0) { values.push(Number(query.minLocationFit)); conditions.push(`l.location_fit_score >= $${values.length}`); }
   if (query.active !== 'false') conditions.push('l.is_active = true');
-  const sort = query.sort === 'location' ? 'l.location_fit_score DESC, l.source_updated_at DESC NULLS LAST' : query.sort === 'updated' ? 'l.source_updated_at DESC NULLS LAST' : 'l.first_observed_at DESC';
+  const sort = query.sort === 'updated' ? 'l.source_updated_at DESC NULLS LAST' : 'l.first_observed_at DESC';
   const limit = Math.min(200, Math.max(1, Number(query.limit) || 100)); const offset = Math.max(0, Number(query.offset) || 0);
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   values.push(limit, offset);
@@ -275,8 +271,8 @@ app.get('/api/listing-departments', async (request) => {
 
 const companySorts: Record<string, string> = {
   name: 'lower(e.name) ASC',
-  engineering: 'active_engineering DESC, lower(e.name) ASC',
-  new: 'new_engineering_7d DESC, lower(e.name) ASC',
+  engineering: 'active_listing_count DESC, lower(e.name) ASC',
+  new: 'new_listings_7d DESC, lower(e.name) ASC',
   recent: 'latest_hiring_activity DESC NULLS LAST, lower(e.name) ASC',
   score: 'prospect_score DESC, lower(e.name) ASC'
 };
@@ -299,27 +295,24 @@ app.get('/api/companies', async (request) => {
       count(DISTINCT b.id)::int AS board_count,
       count(DISTINCT b.id) FILTER (WHERE b.status='active')::int AS active_board_count,
       count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
+      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at)::int AS new_listings_7d,
+      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '30 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at)::int AS new_listings_30d,
       count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering,
       count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_engineering_7d,
       count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '30 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_engineering_30d,
       count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote')::int AS remote_listing_count,
       count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%')::int AS contract_listing_count,
       max(l.last_observed_at) AS latest_hiring_activity,
-      (LEAST(30, count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0) * 5)
-        + LEAST(25, count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0) * 8)
-        + LEAST(20, count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%') * 10)
-        + LEAST(10, count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote') * 2)
-        + CASE WHEN max(l.last_observed_at) >= now() - interval '30 days' THEN 5 ELSE 0 END)::int AS prospect_score,
       COALESCE(array_agg(DISTINCT b.provider) FILTER (WHERE b.id IS NOT NULL), '{}') AS providers
     FROM employers e LEFT JOIN job_boards b ON b.employer_id=e.id LEFT JOIN job_listings l ON l.board_id=b.id
     GROUP BY e.id
   )
   SELECT e.id, e.name, e.website, e.verified_domain, e.description, e.industry, e.headquarters, e.company_size, e.prospect_status, e.first_discovered_at, e.updated_at,
-    metrics.board_count, metrics.active_board_count, metrics.active_listing_count, metrics.active_engineering, metrics.new_engineering_7d, metrics.new_engineering_30d, metrics.remote_listing_count, metrics.contract_listing_count, metrics.latest_hiring_activity, metrics.prospect_score, metrics.providers
+    metrics.board_count, metrics.active_board_count, metrics.active_listing_count, metrics.new_listings_7d, metrics.new_listings_30d, metrics.active_engineering, metrics.new_engineering_7d, metrics.new_engineering_30d, metrics.remote_listing_count, metrics.contract_listing_count, metrics.latest_hiring_activity, metrics.providers
   FROM employers e JOIN metrics ON metrics.id=e.id ${where}`;
   const sort = companySorts[query.sort ?? ''] ?? companySorts.name;
   const result = await pool.query(`${select} ORDER BY ${sort} LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]);
-  const companies = result.rows.map((row) => ({ ...row, prospect_score: calculateProspectScore({ activeEngineering: Number(row.active_engineering), newEngineering7d: Number(row.new_engineering_7d), contractListings: Number(row.contract_listing_count), remoteListings: Number(row.remote_listing_count), hasRecentActivity: Boolean(row.latest_hiring_activity && new Date(row.latest_hiring_activity).getTime() >= Date.now() - 30 * 86_400_000) }).score }));
+  const companies = result.rows.map((row) => ({ ...row, prospect_score: calculateProspectScore({ activeListings: Number(row.active_listing_count), newListings7d: Number(row.new_listings_7d), hasRecentActivity: Boolean(row.latest_hiring_activity && new Date(row.latest_hiring_activity).getTime() >= Date.now() - 30 * 86_400_000) }).score }));
   const total = await pool.query(`SELECT count(*)::int AS count FROM employers e ${where}`, values);
   return { companies, total: total.rows[0].count, limit, offset };
 });
@@ -337,26 +330,24 @@ app.get('/api/companies/:id', async (request, reply) => {
     pool.query(`SELECT b.*, count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1 GROUP BY b.id ORDER BY b.status, b.provider, b.board_identifier`, [id]),
     pool.query(`SELECT count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
       count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering_count,
-      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_listing_count_7d,
-      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '30 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at AND jsonb_array_length(l.engineering_specialties) > 0)::int AS new_listing_count_30d,
+      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '7 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at)::int AS new_listing_count_7d,
+      count(l.id) FILTER (WHERE l.is_active AND l.first_observed_at >= now() - interval '30 days' AND b.initialized_at IS NOT NULL AND l.first_observed_at > b.initialized_at)::int AS new_listing_count_30d,
       count(l.id) FILTER (WHERE l.is_active AND l.remote_mode='remote')::int AS remote_listing_count,
       count(l.id) FILTER (WHERE l.is_active AND lower(l.employment_type) LIKE '%contract%')::int AS contract_listing_count,
       max(b.last_successful_poll) AS last_successful_monitoring
       FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1`, [id]),
     pool.query(`SELECT specialty_values.value AS specialty, count(*)::int AS listing_count FROM job_listings l JOIN job_boards b ON b.id=l.board_id CROSS JOIN LATERAL jsonb_array_elements_text(l.engineering_specialties) AS specialty_values(value) WHERE b.employer_id=$1 AND l.is_active GROUP BY specialty_values.value ORDER BY listing_count DESC, specialty_values.value`, [id]),
-    pool.query(`SELECT l.id, l.title, l.department, l.location, l.remote_mode, l.employment_type, l.seniority, l.application_url, l.original_url, l.source_updated_at, l.first_observed_at, l.engineering_specialties, l.technologies, l.location_fit, l.location_fit_score, b.provider, b.board_identifier FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=$1 AND l.is_active ORDER BY l.source_updated_at DESC NULLS LAST, l.first_observed_at DESC LIMIT 100`, [id])
+    pool.query(`SELECT l.id, l.title, l.department, l.location, l.remote_mode, l.employment_type, l.seniority, l.application_url, l.original_url, l.source_updated_at, l.first_observed_at, l.engineering_specialties, l.technologies, b.provider, b.board_identifier FROM job_listings l JOIN job_boards b ON b.id=l.board_id WHERE b.employer_id=$1 AND l.is_active ORDER BY l.source_updated_at DESC NULLS LAST, l.first_observed_at DESC LIMIT 100`, [id])
     ,pool.query(`SELECT date_trunc('day', o.observed_at) AS day, sum(o.listings_seen)::int AS listings_seen, sum(o.active_engineering)::int AS active_engineering, sum(o.new_listings)::int AS new_listings, sum(o.new_engineering)::int AS new_engineering, sum(o.missing_listings)::int AS missing_listings FROM listing_board_observations o JOIN job_boards b ON b.id=o.board_id WHERE b.employer_id=$1 GROUP BY date_trunc('day', o.observed_at) ORDER BY day ASC LIMIT 180`, [id])
     ,pool.query(`SELECT snapshot_date AS day, active_listings AS listings_seen, active_engineering, new_listings AS new_engineering, new_listings, removed_listings AS missing_listings, specialty_counts, technology_counts, employment_type_counts, work_mode_counts FROM company_daily_metrics WHERE employer_id=$1 ORDER BY snapshot_date ASC LIMIT 180`, [id]),
     pool.query(`SELECT signal_type AS type, signal_type AS label, explanation, data_quality FROM market_signals WHERE employer_id=$1 AND status='active' ORDER BY last_seen_at DESC LIMIT 25`, [id])
     ,pool.query(`SELECT ev.listing_id, ev.event_type, ev.observed_at, ev.source_updated_at, l.title, l.application_url, l.original_url FROM listing_events ev JOIN job_listings l ON l.id=ev.listing_id JOIN job_boards b ON b.id=ev.board_id WHERE b.employer_id=$1 ORDER BY ev.observed_at DESC LIMIT 100`, [id])
   ]);
   const summaryRow = summary.rows[0] ?? {};
-  const prospect = calculateProspectScore({ activeEngineering: Number(summaryRow.active_engineering_count), newEngineering7d: Number(summaryRow.new_listing_count_7d), contractListings: Number(summaryRow.contract_listing_count), remoteListings: Number(summaryRow.remote_listing_count), hasRecentActivity: Boolean(summaryRow.last_successful_monitoring && new Date(summaryRow.last_successful_monitoring).getTime() >= Date.now() - 30 * 86_400_000) });
+  const prospect = calculateProspectScore({ activeListings: Number(summaryRow.active_listing_count), newListings7d: Number(summaryRow.new_listing_count_7d), hasRecentActivity: Boolean(summaryRow.last_successful_monitoring && new Date(summaryRow.last_successful_monitoring).getTime() >= Date.now() - 30 * 86_400_000) });
   const signals: Array<{ type: string; label: string; explanation: string }> = [];
-  const recentNewEngineering = (dailyActivity.rows.length ? dailyActivity.rows : activity.rows).filter((row) => new Date(row.day).getTime() >= Date.now() - 30 * 86_400_000).reduce((total, row) => total + Number(row.new_engineering), 0);
-  if (recentNewEngineering >= 3) signals.push({ type: 'engineering_expansion', label: 'Engineering hiring expansion', explanation: `${recentNewEngineering} engineering openings were observed after board baselines in the last 30 days.` });
-  if (Number(summaryRow.contract_listing_count) > 0) signals.push({ type: 'contract_hiring', label: 'Contract-friendly evidence', explanation: `${summaryRow.contract_listing_count} active listing${Number(summaryRow.contract_listing_count) === 1 ? '' : 's'} explicitly mention contract work.` });
-  if ((specialties.rows as Array<{ specialty: string }>).some((row) => row.specialty === 'infrastructure_devops')) signals.push({ type: 'infrastructure_demand', label: 'Infrastructure demand', explanation: 'Active listings include infrastructure, DevOps, platform, or SRE specialties.' });
+  const recentNewListings = (dailyActivity.rows.length ? dailyActivity.rows : activity.rows).filter((row) => new Date(row.day).getTime() >= Date.now() - 30 * 86_400_000).reduce((total, row) => total + Number(row.new_listings), 0);
+  if (recentNewListings >= 3) signals.push({ type: 'hiring_expansion', label: 'Hiring expansion', explanation: `${recentNewListings} openings were observed after board baselines in the last 30 days.` });
   return { company: { ...company.rows[0], prospect_score: prospect.score, prospect_score_factors: prospect.factors }, boards: boards.rows, summary: summaryRow, specialties: specialties.rows.map((row) => ({ ...row, label: engineeringSpecialtyLabels[row.specialty] || row.specialty })), listings: listings.rows, activity: activity.rows, dailyActivity: dailyActivity.rows, signals: [...signals, ...storedSignals.rows], events: events.rows };
 });
 
@@ -475,7 +466,7 @@ app.post('/api/listing-discovery/jobs', async (request, reply) => {
 app.patch('/api/opportunities/:id', async (request, reply) => {
   const body = request.body as { status?: OpportunityStatus; signal_category?: SignalCategory; suppressed?: boolean };
   if (body.status && !['unread', 'interesting', 'dismissed', 'contacted'].includes(body.status)) return reply.code(400).send({ error: 'Invalid status' });
-  if (body.signal_category && !['direct_hiring', 'software_request', 'employee_referral', 'firsthand_announcement', 'aggregated_listing', 'uncertain'].includes(body.signal_category)) return reply.code(400).send({ error: 'Invalid signal category' });
+  if (body.signal_category && !['direct_hiring', 'service_request', 'employee_referral', 'firsthand_announcement', 'aggregated_listing', 'uncertain'].includes(body.signal_category)) return reply.code(400).send({ error: 'Invalid signal category' });
   if (!body.status && !body.signal_category && body.suppressed === undefined) return reply.code(400).send({ error: 'No changes supplied' });
   const values: unknown[] = []; const assignments: string[] = [];
   if (body.status) { values.push(body.status); assignments.push(`status = $${values.length}`); }
@@ -573,11 +564,10 @@ app.get('/api/settings', async () => {
 app.put('/api/settings', async (request, reply) => {
   const body = request.body as Record<string, unknown>;
   const current = await getPreferences();
-  const allowed = ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumNotificationLocationFitScore', 'notificationsEnabled', 'notifyRecovered', 'listingsNotificationsEnabled', 'minimumListingRelevance', 'minimumListingLocationFitScore', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'heuristics', 'locationProfile'];
+  const allowed = ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'notificationsEnabled', 'notifyRecovered', 'listingsNotificationsEnabled', 'minimumListingRelevance', 'technologyTerms', 'roleTerms', 'remoteTerms', 'internationalTerms', 'contractTerms', 'contactTerms', 'weights', 'heuristics'];
   const changes: Record<string, unknown> = {};
   for (const key of allowed) if (body[key] !== undefined) changes[key] = body[key];
-  for (const key of ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumNotificationLocationFitScore']) if (changes[key] !== undefined && (!Number.isFinite(Number(changes[key])) || Number(changes[key]) < 0 || Number(changes[key]) > 100)) return reply.code(400).send({ error: `${key} must be 0-100` });
-  for (const key of ['minimumListingRelevance', 'minimumListingLocationFitScore']) if (changes[key] !== undefined && (!Number.isFinite(Number(changes[key])) || Number(changes[key]) < 0 || Number(changes[key]) > 100)) return reply.code(400).send({ error: `${key} must be 0-100` });
+  for (const key of ['minimumNotificationScore', 'minimumNotificationSignalQuality', 'minimumNotificationPersonalRelevance', 'minimumListingRelevance']) if (changes[key] !== undefined && (!Number.isFinite(Number(changes[key])) || Number(changes[key]) < 0 || Number(changes[key]) > 100)) return reply.code(400).send({ error: `${key} must be 0-100` });
   return { preferences: await setPreferences({ ...current, ...changes }) };
 });
 
@@ -590,7 +580,7 @@ app.get('/api/monitoring', async () => {
   const states = await pool.query('SELECT * FROM ingestion_states ORDER BY source');
   const notification = await pool.query(`SELECT count(*) FILTER (WHERE status = 'sent')::int AS sent, count(*) FILTER (WHERE status IN ('pending','failed'))::int AS pending, count(*) FILTER (WHERE status = 'failed')::int AS failed FROM notifications`);
   const listingBoards = await pool.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE status='active')::int AS active, count(*) FILTER (WHERE last_successful_poll IS NOT NULL)::int AS polled, count(*) FILTER (WHERE consecutive_failure_count > 0)::int AS failing FROM job_boards`);
-  const listingCounts = await pool.query(`SELECT count(*) FILTER (WHERE is_active)::int AS active, count(*) FILTER (WHERE status='saved')::int AS saved, count(*) FILTER (WHERE status='applied')::int AS applied, count(*) FILTER (WHERE status='dismissed')::int AS dismissed, count(*) FILTER (WHERE location_fit IN ('excellent','good'))::int AS good_location FROM job_listings`);
+  const listingCounts = await pool.query(`SELECT count(*) FILTER (WHERE is_active)::int AS active, count(*) FILTER (WHERE status='saved')::int AS saved, count(*) FILTER (WHERE status='applied')::int AS applied, count(*) FILTER (WHERE status='dismissed')::int AS dismissed FROM job_listings`);
   const listingNotifications = await pool.query(`SELECT count(*) FILTER (WHERE status='sent')::int AS sent, count(*) FILTER (WHERE status IN ('pending','failed'))::int AS pending, count(*) FILTER (WHERE status='failed')::int AS failed FROM listing_notifications`);
   const discovery = await pool.query(`SELECT j.*, (SELECT count(*)::int FROM listing_discovery_candidates c WHERE c.discovery_job_id=j.id) AS candidate_count, (SELECT count(*)::int FROM listing_discovery_candidates c WHERE c.discovery_job_id=j.id AND c.status='imported') AS imported_count FROM listing_discovery_jobs j ORDER BY j.created_at DESC LIMIT 1`);
   return { sources: states.rows, notifications: notification.rows[0], listingBoards: listingBoards.rows[0], listingCounts: listingCounts.rows[0], listingNotifications: listingNotifications.rows[0], discovery: discovery.rows[0] ?? null, smtpConfigured: Boolean(config.smtp.host && config.smtp.from && config.smtp.recipient) };
