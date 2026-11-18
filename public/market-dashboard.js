@@ -15,12 +15,13 @@
   const colors = ['#168052', '#3f78b5', '#d97939', '#8b5fbf', '#bd4d68', '#4f9b92', '#8a6d3b', '#71807a'];
   const dimensionLabels = { category: 'Job categories', specialty: 'Engineering specialties', technology: 'Technologies', region: 'Regions', country: 'Countries' };
   const categoryLabels = { software_engineering: 'Software engineering', it_infrastructure: 'IT / infrastructure', data_analytics: 'Data / analytics', product: 'Product', design: 'Design', sales: 'Sales', marketing: 'Marketing', operations: 'Operations', finance: 'Finance', customer_support: 'Customer support', other: 'Other', unknown: 'Unknown' };
+  const facetLabels = { unknown: 'Unknown', worldwide: 'Worldwide', APAC: 'APAC', Asia: 'Asia', Europe: 'Europe', Americas: 'Americas', EMEA: 'EMEA' };
 
   function today() { return new Date().toISOString().slice(0, 10); }
   function fromDate(days) { const value = new Date(); value.setUTCDate(value.getUTCDate() - days + 1); return value.toISOString().slice(0, 10); }
   function pct(value) { return Math.round(Number(value || 0) * 100) + '%'; }
   function delta(value, type = 'share') { const number = Number(value || 0); return (number >= 0 ? '+' : '') + (type === 'share' ? (number * 100).toFixed(1) + ' pp' : number.toLocaleString()); }
-  function label(value, labels = {}) { return labels[value] || categoryLabels[value] || String(value || 'Unknown').replaceAll('_', ' '); }
+  function label(value, labels = {}) { return labels[value] || categoryLabels[value] || facetLabels[value] || String(value || 'Unknown').replaceAll('_', ' '); }
   function params() {
     const query = new URLSearchParams(location.search);
     state.windowDays = Number(query.get('marketWindow')) || state.windowDays;
@@ -99,6 +100,8 @@
     if (!grouped.rows.length) return '<p class="subtle">No snapshots are available for this period and cohort yet.</p>';
     const width = 900, height = 285, left = 42, right = 16, top = 18, bottom = 34;
     const plotWidth = width - left - right, plotHeight = height - top - bottom;
+    const totalSeries = new Map((data.total_series || []).map((row) => [row.snapshot_date, Number(row.active_listings || 0)]));
+    const observedTotal = (entry) => totalSeries.get(entry.period) || 0;
     const valuesFor = (entry, key) => {
       if (key === '__remaining') {
         const known = entry.chartKeys.filter((item) => item !== '__remaining').reduce((sum, item) => sum + Number(entry.values.get(item)?.active_listings || 0), 0);
@@ -106,7 +109,7 @@
       }
       return Number(entry.values.get(key)?.active_listings || 0);
     };
-    const maxValue = Math.max(1, ...grouped.rows.map((entry) => entry.total));
+    const maxValue = Math.max(1, ...grouped.rows.map((entry) => Math.max(entry.total, observedTotal(entry))));
     const denominator = field === 'share' ? 1 : maxValue;
     const x = (index) => left + (grouped.rows.length < 2 ? plotWidth / 2 : (index / (grouped.rows.length - 1)) * plotWidth);
     const y = (value) => top + plotHeight - (value / denominator) * plotHeight;
@@ -129,6 +132,10 @@
         : '<path d="' + path + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82">';
       return shape + '<title>' + esc(label(key === '__remaining' ? 'Remaining' : key)) + '</title>' + (grouped.rows.length === 1 ? '</rect>' : '</path>');
     }).join('') : '';
+    const totalPoints = grouped.rows.map((entry, index) => x(index) + ' ' + y(observedTotal(entry))).join(' L ');
+    const totalLine = field === 'volume' && grouped.rows.some((entry) => observedTotal(entry) > 0)
+      ? (grouped.rows.length === 1 ? '<circle cx="' + x(0) + '" cy="' + y(observedTotal(grouped.rows[0])) + '" r="4" class="market-total-point"></circle>' : '<path d="M ' + totalPoints + '" fill="none" class="market-total-line"></path>')
+      : '';
     const hoverPoints = grouped.rows.map((entry, index) => {
       let stack = 0;
       return entry.chartKeys.map((key) => {
@@ -143,6 +150,7 @@
       const zoneX = grouped.rows.length < 2 ? left : Math.max(left, x(index) - step / 2);
       const zoneWidth = grouped.rows.length < 2 ? plotWidth : Math.min(step, width - right - zoneX);
       const lines = [String(entry.period).slice(0, 10)];
+      if (field === 'volume' && observedTotal(entry) > 0) lines.push('Total observed: ' + observedTotal(entry).toLocaleString());
       entry.chartKeys.forEach((key) => {
         const raw = valuesFor(entry, key);
         const value = field === 'share' ? (entry.total ? raw / entry.total : 0) : raw;
@@ -155,8 +163,8 @@
       return '<text x="' + x(index) + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(String(entry.period).slice(0, 10)) + '</text>';
     }).join('');
     const legendKeys = grouped.rows[0]?.chartKeys || [];
-    const legend = legendKeys.map((key, index) => '<button type="button" class="market-sector-key ' + (state.focus === key ? 'selected' : '') + '" data-sector="' + esc(key) + '"><i style="background:' + colors[index % colors.length] + '"></i>' + esc(label(key === '__remaining' ? 'Remaining' : key)) + '</button>').join('');
-    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(title) + '"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight) + '" y2="' + (top + plotHeight) + '" class="chart-axis"></line><line x1="' + left + '" x2="' + (width - right) + '" y1="' + top + '" y2="' + top + '" class="chart-gridline"></line>' + paths + periodHoverZones + hoverPoints + labels + '</svg><div class="market-chart-legend">' + legend + '</div></div>';
+    const legend = legendKeys.map((key, index) => '<button type="button" class="market-sector-key ' + (state.focus === key ? 'selected' : '') + '" data-sector="' + esc(key) + '"><i style="background:' + colors[index % colors.length] + '"></i>' + esc(label(key === '__remaining' ? 'Remaining' : key)) + '</button>').join('') + (field === 'volume' && totalLine ? '<span class="market-total-key"><i></i>Total observed</span>' : '');
+    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(title) + '"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight) + '" y2="' + (top + plotHeight) + '" class="chart-axis"></line><line x1="' + left + '" x2="' + (width - right) + '" y1="' + top + '" y2="' + top + '" class="chart-gridline"></line>' + paths + totalLine + periodHoverZones + hoverPoints + labels + '</svg><div class="market-chart-legend">' + legend + '</div></div>';
   }
 
   function flowSvg(data) {

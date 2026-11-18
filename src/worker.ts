@@ -9,7 +9,7 @@ import { RedditSource } from './sources/reddit.js';
 import type { SourceAdapter } from './sources/types.js';
 import { startListingPolling } from './listings/service.js';
 import { startListingDiscovery } from './listings/discovery.js';
-import { backfillListingMetadata } from './listings/company.js';
+import { backfillListingLocationSignals, backfillListingMetadata } from './listings/company.js';
 import { backfillListingCompensation } from './listings/salary.js';
 import { backfillListingClassification, loadTechnologyTaxonomy } from './listings/classification.js';
 import { detectMarketSignals, runDailyMarketSnapshot } from './listings/analytics.js';
@@ -21,6 +21,7 @@ let discoveryTimer: NodeJS.Timeout | undefined;
 let analyticsTimer: NodeJS.Timeout | undefined;
 let classificationTimer: NodeJS.Timeout | undefined;
 let classificationReady: Promise<void> | undefined;
+let locationSignalsReady: Promise<void> | undefined;
 
 export async function startWorkers() {
   if (started) return;
@@ -45,12 +46,13 @@ export async function startWorkers() {
   if (config.enableListings && config.enableListingDiscovery) discoveryTimer = await startListingDiscovery(config.listingDiscoveryIntervalMs);
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));
+  if (config.enableListings) locationSignalsReady = backfillListingLocationSignals().catch((error) => console.error('listing location backfill failed', error));
   if (config.enableListings) {
     classificationReady = backfillListingClassification().catch((error) => console.error('listing classification backfill failed', error));
     classificationTimer = setInterval(() => void loadTechnologyTaxonomy().then(() => backfillListingClassification()).catch((error) => console.error('listing classification refresh failed', error)), 60 * 60 * 1000);
   }
   if (config.enableListings) {
-    const runAnalytics = async () => { await classificationReady; await runDailyMarketSnapshot(); await detectMarketSignals(); };
+    const runAnalytics = async () => { await classificationReady; await locationSignalsReady; await runDailyMarketSnapshot(); await detectMarketSignals(); };
     void runAnalytics().catch((error) => console.error('market analytics failed', error));
     analyticsTimer = setInterval(() => void runAnalytics().catch((error) => console.error('market analytics failed', error)), 60 * 60 * 1000);
   }

@@ -1,6 +1,7 @@
 import { pool } from '../db.js';
 export { engineeringSpecialtyLabels, classifyEngineeringSpecialties, extractListingTechnologies } from './classification.js';
 import { classifyEngineeringSpecialties, extractListingTechnologies } from './classification.js';
+import { listingLocationSignals } from './pipeline.js';
 
 export function isEngineeringListing(specialties: string[]): boolean { return specialties.length > 0; }
 
@@ -37,4 +38,36 @@ export async function backfillListingMetadata() {
   }
   await pool.query(`INSERT INTO app_settings (key, value) VALUES ('company_listing_metadata_backfill_v1', $1) ON CONFLICT (key) DO NOTHING`, [JSON.stringify({ completed: true, processed })]);
   console.info(`Company metadata backfill complete: ${processed} listings processed`);
+}
+
+export async function backfillListingLocationSignals() {
+  const marker = await pool.query(`SELECT 1 FROM app_settings WHERE key='listing_location_signals_backfill_v2'`);
+  if (marker.rows[0]) return;
+  let processed = 0;
+  let lastId: string | null = null;
+  while (true) {
+    type LocationBackfillRow = { id: string; location: string; secondary_locations: string[]; geographic_restrictions: string[]; remote_mode: string; description: string };
+    const locationRows: { rows: LocationBackfillRow[] } = await pool.query(`SELECT id, location, secondary_locations, geographic_restrictions, remote_mode, description
+      FROM job_listings WHERE ($1::uuid IS NULL OR id > $1::uuid) ORDER BY id LIMIT 500`, [lastId]);
+    if (!locationRows.rows.length) break;
+    const updates = locationRows.rows.map((row) => ({
+      id: row.id,
+      location_signals: listingLocationSignals({
+        location: row.location,
+        secondaryLocations: row.secondary_locations ?? [],
+        geographicRestrictions: row.geographic_restrictions ?? [],
+        remoteMode: row.remote_mode as 'remote' | 'hybrid' | 'onsite' | 'unknown',
+        description: row.description ?? ''
+      })
+    }));
+    await pool.query(`UPDATE job_listings AS listing
+      SET location_signals=updates.location_signals, updated_at=now()
+      FROM jsonb_to_recordset($1::jsonb) AS updates(id uuid, location_signals jsonb)
+      WHERE listing.id=updates.id`, [JSON.stringify(updates)]);
+    processed += locationRows.rows.length;
+    lastId = locationRows.rows.at(-1)?.id ?? lastId;
+    if (processed % 5_000 === 0) console.info(`Listing location backfill: ${processed} listings processed`);
+  }
+  await pool.query(`INSERT INTO app_settings (key, value) VALUES ('listing_location_signals_backfill_v2', $1) ON CONFLICT (key) DO NOTHING`, [JSON.stringify({ completed: true, processed })]);
+  console.info(`Listing location backfill complete: ${processed} listings processed`);
 }

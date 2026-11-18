@@ -1,7 +1,7 @@
 import { evaluateLocationFit, extractLocationSignals } from '../pipeline.js';
 import type { ListingAnalysis, LocationSignals, NormalizedJobListing, Preferences } from '../types.js';
 
-function listingLocationSignals(listing: NormalizedJobListing): LocationSignals {
+export function listingLocationSignals(listing: Pick<NormalizedJobListing, 'location' | 'secondaryLocations' | 'geographicRestrictions' | 'remoteMode' | 'description'>): LocationSignals {
   // ATS location fields describe where the candidate may work.  Keep them
   // separate from the description: descriptions frequently mention offices,
   // customers, and markets that are unrelated to candidate eligibility.

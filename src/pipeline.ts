@@ -23,11 +23,11 @@ export function extractOutboundDomains(text: string): string[] {
 
 const locationCatalog: Array<[string, string[]]> = [
   ['United States', ['united states', 'u.s.a.', 'usa', 'u.s.']], ['Canada', ['canada']], ['Mexico', ['mexico']],
-  ['United Kingdom', ['united kingdom', 'uk', 'u.k.']], ['Ireland', ['ireland']], ['Germany', ['germany']], ['France', ['france']], ['Netherlands', ['netherlands']], ['Spain', ['spain']], ['Portugal', ['portugal']], ['Switzerland', ['switzerland']], ['Poland', ['poland']], ['Europe', ['europe', 'eu']],
-  ['Taiwan', ['taiwan']], ['Japan', ['japan']], ['South Korea', ['south korea', 'korea']], ['Singapore', ['singapore']], ['Hong Kong', ['hong kong']], ['India', ['india']], ['Australia', ['australia']], ['New Zealand', ['new zealand']], ['Israel', ['israel']], ['Brazil', ['brazil']],
+  ['United Kingdom', ['united kingdom', 'uk', 'u.k.']], ['Ireland', ['ireland']], ['Germany', ['germany']], ['France', ['france']], ['Netherlands', ['netherlands']], ['Spain', ['spain']], ['Portugal', ['portugal']], ['Switzerland', ['switzerland']], ['Poland', ['poland']], ['Austria', ['austria']], ['Belgium', ['belgium']], ['Denmark', ['denmark']], ['Finland', ['finland']], ['Greece', ['greece']], ['Iceland', ['iceland']], ['Italy', ['italy']], ['Norway', ['norway']], ['Romania', ['romania']], ['Sweden', ['sweden']], ['Czech Republic', ['czech republic', 'czechia']], ['Hungary', ['hungary']], ['Ukraine', ['ukraine']], ['Europe', ['europe', 'eu']],
+  ['Taiwan', ['taiwan']], ['Japan', ['japan']], ['South Korea', ['south korea', 'korea']], ['Singapore', ['singapore']], ['Hong Kong', ['hong kong']], ['India', ['india']], ['China', ['china']], ['Philippines', ['philippines']], ['Vietnam', ['vietnam']], ['Thailand', ['thailand']], ['Malaysia', ['malaysia']], ['Indonesia', ['indonesia']], ['Pakistan', ['pakistan']], ['Bangladesh', ['bangladesh']], ['Australia', ['australia']], ['New Zealand', ['new zealand']], ['Israel', ['israel']], ['United Arab Emirates', ['united arab emirates', 'uae']], ['Saudi Arabia', ['saudi arabia']], ['South Africa', ['south africa']], ['Nigeria', ['nigeria']], ['Brazil', ['brazil']], ['Argentina', ['argentina']], ['Chile', ['chile']], ['Colombia', ['colombia']],
   ['New York', ['new york']], ['San Francisco', ['san francisco']], ['Seattle', ['seattle']], ['Los Angeles', ['los angeles']], ['Boston', ['boston']], ['Toronto', ['toronto']], ['Vancouver', ['vancouver']], ['London', ['london']], ['Berlin', ['berlin']], ['Munich', ['munich']], ['Paris', ['paris']], ['Amsterdam', ['amsterdam']], ['Dublin', ['dublin']], ['Singapore', ['singapore']], ['Taipei', ['taipei']]
 ];
-const countryLabels = new Set(['United States', 'Canada', 'Mexico', 'United Kingdom', 'Ireland', 'Germany', 'France', 'Netherlands', 'Spain', 'Portugal', 'Switzerland', 'Poland', 'Taiwan', 'Japan', 'South Korea', 'Singapore', 'Hong Kong', 'India', 'Australia', 'New Zealand', 'Israel', 'Brazil']);
+const countryLabels = new Set(['United States', 'Canada', 'Mexico', 'United Kingdom', 'Ireland', 'Germany', 'France', 'Netherlands', 'Spain', 'Portugal', 'Switzerland', 'Poland', 'Austria', 'Belgium', 'Denmark', 'Finland', 'Greece', 'Iceland', 'Italy', 'Norway', 'Romania', 'Sweden', 'Czech Republic', 'Hungary', 'Ukraine', 'Taiwan', 'Japan', 'South Korea', 'Singapore', 'Hong Kong', 'India', 'China', 'Philippines', 'Vietnam', 'Thailand', 'Malaysia', 'Indonesia', 'Pakistan', 'Bangladesh', 'Australia', 'New Zealand', 'Israel', 'United Arab Emirates', 'Saudi Arabia', 'South Africa', 'Nigeria', 'Brazil', 'Argentina', 'Chile', 'Colombia']);
 
 export function extractLocationSignals(text: string): LocationSignals {
   const locations = new Set<string>();
@@ -53,12 +53,23 @@ export function extractLocationSignals(text: string): LocationSignals {
   ];
   const timezoneRequirements = [...new Set(timezoneMatches.map((match) => match[0].replace(/\s+/g, ' ').trim()))];
   const global = globalPattern.test(text) || /\bremote[- ]?worldwide\b/i.test(text);
+  const countries = [...locations].filter((location) => countryLabels.has(location));
   const regions = [...new Set([
     /\b(?:APAC|Asia[- ]Pacific|Asia Pacific)\b/i.test(text) ? 'APAC' : '',
     /\b(?:Asia|Asian)\b/i.test(text) ? 'Asia' : '',
     /\b(?:EMEA|Europe(?:an)?|European Union|EU)\b/i.test(text) ? 'Europe' : '',
     /\b(?:Americas|North America|Latin America)\b/i.test(text) ? 'Americas' : ''
   ].filter(Boolean))];
+  const regionSet = new Set(regions);
+  if (global) regionSet.add('Worldwide');
+  for (const country of countries) {
+    if (['United States', 'Canada', 'Mexico', 'Brazil', 'Argentina', 'Chile', 'Colombia'].includes(country)) regionSet.add('Americas');
+    if (['United Kingdom', 'Ireland', 'Germany', 'France', 'Netherlands', 'Spain', 'Portugal', 'Switzerland', 'Poland', 'Austria', 'Belgium', 'Denmark', 'Finland', 'Greece', 'Iceland', 'Italy', 'Norway', 'Romania', 'Sweden', 'Czech Republic', 'Hungary', 'Ukraine'].includes(country)) regionSet.add('Europe');
+    if (['Taiwan', 'Japan', 'South Korea', 'Singapore', 'Hong Kong', 'India', 'China', 'Philippines', 'Vietnam', 'Thailand', 'Malaysia', 'Indonesia', 'Pakistan', 'Bangladesh'].includes(country)) { regionSet.add('Asia'); regionSet.add('APAC'); }
+    if (['Australia', 'New Zealand'].includes(country)) regionSet.add('APAC');
+    if (['Israel', 'United Arab Emirates', 'Saudi Arabia', 'South Africa', 'Nigeria'].includes(country)) regionSet.add('EMEA');
+  }
+  const derivedRegions = [...regionSet];
   const workEligibility = global ? 'worldwide' : regions.length > 0 ? 'regional' : locations.size > 0 ? 'country_specific' : 'unknown';
   const hasRemote = /\b(remote|remotely|distributed|work from home|work from anywhere|fully virtual)\b/i.test(text);
   const hasOnsite = /\b(on[- ]?site|in[- ]office|office[- ]based|work from the office)\b/i.test(text);
@@ -68,8 +79,7 @@ export function extractLocationSignals(text: string): LocationSignals {
   const hasRestriction = /\b(?:[a-z. -]+\s+only|must be (?:based|located|resident) in [\w'. -]{2,48}|residents? of [\w'. -]{2,48}|no visa sponsorship|work authorization(?: required)?)\b/i.test(text);
   const constraint = global ? 'allowed' : (locations.size > 0 && (hasLocationPhrase || hasRestriction)) || hasRestriction ? 'restricted' : 'unknown';
   const employerLocations = [...locations].filter((location) => /\b(?:company|employer|team|startup|business)\b.{0,30}\b(?:based|located)\b/i.test(text));
-  const countries = [...locations].filter((location) => countryLabels.has(location));
-  return { workMode, locations: [...locations], countries, employerLocations, regions, workEligibility, constraint, timezoneRequirements, evidence: evidence.slice(0, 12) };
+  return { workMode, locations: [...locations], countries, employerLocations, regions: derivedRegions, workEligibility, constraint, timezoneRequirements, evidence: evidence.slice(0, 12) };
 }
 
 export function evaluateLocationFit(signals: LocationSignals, preferences: Preferences): { fit: LocationFit; score: number; reasons: string[] } {

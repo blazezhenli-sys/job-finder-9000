@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultPreferences } from './db.js';
-import { analyzePost, detectionLatencyMs, normalizeText, notificationEligible, stableOpportunityKey } from './pipeline.js';
+import { analyzePost, detectionLatencyMs, extractLocationSignals, normalizeText, notificationEligible, stableOpportunityKey } from './pipeline.js';
 import type { DetectionRule, NormalizedPost } from './types.js';
 
 const post: NormalizedPost = {
@@ -84,5 +84,9 @@ describe('hiring signal pipeline', () => {
     expect(arbitraryCountry.locationSignals.locations).toContain('Jordan');
     expect(arbitraryCountry.locationSignals.constraint).toBe('restricted');
     expect(analyzePost({ ...post, text: 'We are hiring and grateful to all of us.' }, rules, defaultPreferences).locationSignals.locations).not.toContain('United States');
+  });
+  it('derives broad regions from normalized countries and exposes worldwide coverage', () => {
+    expect(extractLocationSignals('Taipei, Taiwan').regions).toEqual(expect.arrayContaining(['Asia', 'APAC']));
+    expect(extractLocationSignals('Remote worldwide').regions).toContain('Worldwide');
   });
 });
