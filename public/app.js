@@ -156,7 +156,7 @@ const appNavigation = { handlingRoute: false, preserveListingReset: false, prese
 const nativeReplaceState = history.replaceState.bind(history);
 const navigationUrl = (hash = location.hash) => `${location.pathname}${location.search}${hash || ''}`;
 history.replaceState = (stateValue, title, url) => nativeReplaceState(stateValue, title, typeof url === 'string' && location.hash && !url.includes('#') ? `${url}${location.hash}` : url);
-const validNavigationViews = new Set(['listings', 'market', 'companies', 'polling', 'monitoring', 'rules', 'authors', 'settings', 'company-profile']);
+const validNavigationViews = new Set(['listings', 'market', 'companies', 'polling', 'monitoring', 'rules', 'authors', 'company-profile']);
 function navigationRoute() {
   const parts = decodeURIComponent(location.hash.replace(/^#/, '')).split('/').filter(Boolean);
   const listingIndex = parts.indexOf('listing');
