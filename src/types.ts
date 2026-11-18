@@ -60,6 +60,7 @@ export interface AuthorSignals {
 export interface LocationSignals {
   workMode: WorkMode;
   locations: string[];
+  countries: string[];
   employerLocations: string[];
   regions: string[];
   workEligibility: 'worldwide' | 'regional' | 'country_specific' | 'unknown';

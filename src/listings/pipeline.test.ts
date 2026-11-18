@@ -34,6 +34,12 @@ describe('listing scoring', () => {
     expect(result.locationFitReasons).toContain('On-site outside Taiwan');
   });
 
+  it('keeps normalized country values separate from city and region values', () => {
+    const result = analyzeListing({ ...listing, location: 'Taipei, Taiwan', remoteMode: 'remote' }, defaultPreferences);
+    expect(result.locationSignals.countries).toEqual(['Taiwan']);
+    expect(result.locationSignals.locations).toEqual(expect.arrayContaining(['Taiwan', 'Taipei']));
+  });
+
   it('does not treat an employer statistic as worldwide candidate eligibility', () => {
     const result = analyzeListing({
       ...listing,

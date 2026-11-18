@@ -27,6 +27,7 @@ const locationCatalog: Array<[string, string[]]> = [
   ['Taiwan', ['taiwan']], ['Japan', ['japan']], ['South Korea', ['south korea', 'korea']], ['Singapore', ['singapore']], ['Hong Kong', ['hong kong']], ['India', ['india']], ['Australia', ['australia']], ['New Zealand', ['new zealand']], ['Israel', ['israel']], ['Brazil', ['brazil']],
   ['New York', ['new york']], ['San Francisco', ['san francisco']], ['Seattle', ['seattle']], ['Los Angeles', ['los angeles']], ['Boston', ['boston']], ['Toronto', ['toronto']], ['Vancouver', ['vancouver']], ['London', ['london']], ['Berlin', ['berlin']], ['Munich', ['munich']], ['Paris', ['paris']], ['Amsterdam', ['amsterdam']], ['Dublin', ['dublin']], ['Singapore', ['singapore']], ['Taipei', ['taipei']]
 ];
+const countryLabels = new Set(['United States', 'Canada', 'Mexico', 'United Kingdom', 'Ireland', 'Germany', 'France', 'Netherlands', 'Spain', 'Portugal', 'Switzerland', 'Poland', 'Taiwan', 'Japan', 'South Korea', 'Singapore', 'Hong Kong', 'India', 'Australia', 'New Zealand', 'Israel', 'Brazil']);
 
 export function extractLocationSignals(text: string): LocationSignals {
   const locations = new Set<string>();
@@ -67,7 +68,8 @@ export function extractLocationSignals(text: string): LocationSignals {
   const hasRestriction = /\b(?:[a-z. -]+\s+only|must be (?:based|located|resident) in [\w'. -]{2,48}|residents? of [\w'. -]{2,48}|no visa sponsorship|work authorization(?: required)?)\b/i.test(text);
   const constraint = global ? 'allowed' : (locations.size > 0 && (hasLocationPhrase || hasRestriction)) || hasRestriction ? 'restricted' : 'unknown';
   const employerLocations = [...locations].filter((location) => /\b(?:company|employer|team|startup|business)\b.{0,30}\b(?:based|located)\b/i.test(text));
-  return { workMode, locations: [...locations], employerLocations, regions, workEligibility, constraint, timezoneRequirements, evidence: evidence.slice(0, 12) };
+  const countries = [...locations].filter((location) => countryLabels.has(location));
+  return { workMode, locations: [...locations], countries, employerLocations, regions, workEligibility, constraint, timezoneRequirements, evidence: evidence.slice(0, 12) };
 }
 
 export function evaluateLocationFit(signals: LocationSignals, preferences: Preferences): { fit: LocationFit; score: number; reasons: string[] } {

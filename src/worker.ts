@@ -19,6 +19,7 @@ const sources: SourceAdapter[] = [];
 let listingTimer: NodeJS.Timeout | undefined;
 let discoveryTimer: NodeJS.Timeout | undefined;
 let analyticsTimer: NodeJS.Timeout | undefined;
+let classificationTimer: NodeJS.Timeout | undefined;
 
 export async function startWorkers() {
   if (started) return;
@@ -42,7 +43,10 @@ export async function startWorkers() {
   if (config.enableListings && config.enableListingDiscovery) discoveryTimer = await startListingDiscovery(config.listingDiscoveryIntervalMs);
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));
-  if (config.enableListings) void backfillListingClassification().catch((error) => console.error('listing classification backfill failed', error));
+  if (config.enableListings) {
+    void backfillListingClassification().catch((error) => console.error('listing classification backfill failed', error));
+    classificationTimer = setInterval(() => void loadTechnologyTaxonomy().then(() => backfillListingClassification()).catch((error) => console.error('listing classification refresh failed', error)), 60 * 60 * 1000);
+  }
   if (config.enableListings) {
     const runAnalytics = async () => { await runDailyMarketSnapshot(); await detectMarketSignals(); };
     void runAnalytics().catch((error) => console.error('market analytics failed', error));
@@ -51,4 +55,4 @@ export async function startWorkers() {
   void deliverNotifications();
 }
 
-export function stopWorkers() { for (const source of sources) source.stop(); if (listingTimer) clearInterval(listingTimer); if (discoveryTimer) clearInterval(discoveryTimer); if (analyticsTimer) clearInterval(analyticsTimer); }
+export function stopWorkers() { for (const source of sources) source.stop(); if (listingTimer) clearInterval(listingTimer); if (discoveryTimer) clearInterval(discoveryTimer); if (analyticsTimer) clearInterval(analyticsTimer); if (classificationTimer) clearInterval(classificationTimer); }
