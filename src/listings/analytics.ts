@@ -207,7 +207,7 @@ export function marketDashboardRankings(currentMetrics: any[], previousMetrics: 
 export async function getMarketDashboard(from: string, to: string, cohort = 'stable_28d', dimension = 'category', granularity = 'week') {
   const safeCohort = ['all', 'stable_28d'].includes(cohort) ? cohort : 'stable_28d';
   const safeDimension = ['category', 'specialty', 'technology', 'region', 'country'].includes(dimension) ? dimension : 'category';
-  const safeGranularity = ['week', 'month'].includes(granularity) ? granularity : 'week';
+  const safeGranularity = ['day', 'week', 'month'].includes(granularity) ? granularity : 'week';
   const { previousFrom, previousTo } = marketDashboardPeriods(from, to);
   const [current, previous, totalCurrent, totalPrevious, signals] = await Promise.all([
     getMarketTrends(from, to, safeCohort, safeDimension, safeGranularity),

@@ -51,7 +51,7 @@
 
   view.innerHTML = `
     <div class="page-heading"><div><p class="eyebrow">MARKET OBSERVABILITY</p><h1>Market dashboard</h1><p class="subtle">See where observed hiring is concentrated, how sector share changes, and which companies support the movement.</p></div><div class="heading-actions"><button id="market-dashboard-refresh" class="button secondary" type="button">Refresh</button></div></div>
-    <div class="market-dashboard-controls"><div class="filters"><label>Window<select id="market-dashboard-window"><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option></select></label><label>Cohort<select id="market-dashboard-cohort"><option value="stable_28d">Stable 28-day cohort</option><option value="all">All observed boards</option></select></label><label>Granularity<select id="market-dashboard-granularity"><option value="week">Weekly</option><option value="month">Monthly</option></select></label><label>Dimension<select id="market-dashboard-dimension"><option value="category">Job categories</option><option value="specialty">Engineering specialties</option><option value="technology">Technologies</option><option value="region">Regions</option><option value="country">Countries</option></select></label><label>Display<select id="market-dashboard-mode"><option value="both">Volume + share</option><option value="volume">Volume</option><option value="share">Share</option></select></label></div><button id="market-dashboard-advanced-toggle" class="button secondary" type="button">Evidence filters</button></div>
+    <div class="market-dashboard-controls"><div class="filters"><label>Window<select id="market-dashboard-window"><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option></select></label><label>Cohort<select id="market-dashboard-cohort"><option value="stable_28d">Stable 28-day cohort</option><option value="all">All observed boards</option></select></label><label>Granularity<select id="market-dashboard-granularity"><option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option></select></label><label>Dimension<select id="market-dashboard-dimension"><option value="category">Job categories</option><option value="specialty">Engineering specialties</option><option value="technology">Technologies</option><option value="region">Regions</option><option value="country">Countries</option></select></label><label>Display<select id="market-dashboard-mode"><option value="both">Volume + share</option><option value="volume">Volume</option><option value="share">Share</option></select></label></div><button id="market-dashboard-advanced-toggle" class="button secondary" type="button">Evidence filters</button></div>
     <div id="market-dashboard-advanced" class="market-dashboard-advanced hidden"><span class="subtle">These filters affect evidence drill-downs, not historical cohort calculations.</span><select id="market-dashboard-provider"><option value="">Any ATS provider</option><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever</option><option value="remotive">Remotive</option><option value="adzuna">Adzuna</option></select><select id="market-dashboard-work-mode"><option value="">Any work mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option><option value="unknown">Unknown</option></select><select id="market-dashboard-employment"><option value="">Any employment type</option><option value="full">Full-time</option><option value="contract">Contract</option><option value="freelance">Freelance</option></select></div>
     <div id="market-dashboard-stats" class="stats market-dashboard-stats"></div>
     <div id="market-dashboard-coverage" class="market-dashboard-coverage subtle"></div>
@@ -123,13 +123,22 @@
       const path = 'M ' + grouped.rows.map((entry, index) => x(index) + ' ' + tops[index]).join(' L ') + ' L ' + grouped.rows.map((entry, index) => x(grouped.rows.length - 1 - index) + ' ' + y(bottomValues[grouped.rows.length - 1 - index])).join(' L ') + ' Z';
       return '<path d="' + path + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82"><title>' + esc(label(key === '__other' ? 'Other' : key)) + '</title></path>';
     }).join('') : '';
+    const hoverPoints = grouped.rows.map((entry, index) => {
+      let stack = 0;
+      return entry.chartKeys.map((key) => {
+        const raw = valuesFor(entry, key);
+        const value = field === 'share' ? (entry.total ? raw / entry.total : 0) : raw;
+        stack += value;
+        return '<circle cx="' + x(index) + '" cy="' + y(stack) + '" r="7" class="chart-point"><title>' + esc(String(entry.period).slice(0, 10)) + ' · ' + esc(label(key === '__other' ? 'Other' : key)) + ' · ' + (field === 'share' ? (value * 100).toFixed(1) + '%' : raw.toLocaleString()) + '</title></circle>';
+      }).join('');
+    }).join('');
     const labels = grouped.rows.filter((entry, index) => index === 0 || index === grouped.rows.length - 1 || index % Math.max(1, Math.floor(grouped.rows.length / 4)) === 0).map((entry) => {
       const index = grouped.periods.indexOf(entry.period);
       return '<text x="' + x(index) + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(String(entry.period).slice(0, 10)) + '</text>';
     }).join('');
     const legendKeys = grouped.rows[0]?.chartKeys || [];
     const legend = legendKeys.map((key, index) => '<button type="button" class="market-sector-key ' + (state.focus === key ? 'selected' : '') + '" data-sector="' + esc(key) + '"><i style="background:' + colors[index % colors.length] + '"></i>' + esc(label(key === '__other' ? 'Other' : key)) + '</button>').join('');
-    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(title) + '"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight) + '" y2="' + (top + plotHeight) + '" class="chart-axis"></line><line x1="' + left + '" x2="' + (width - right) + '" y1="' + top + '" y2="' + top + '" class="chart-gridline"></line>' + paths + labels + '</svg><div class="market-chart-legend">' + legend + '</div></div>';
+    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(title) + '"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight) + '" y2="' + (top + plotHeight) + '" class="chart-axis"></line><line x1="' + left + '" x2="' + (width - right) + '" y1="' + top + '" y2="' + top + '" class="chart-gridline"></line>' + paths + hoverPoints + labels + '</svg><div class="market-chart-legend">' + legend + '</div></div>';
   }
 
   function flowSvg(data) {
@@ -142,7 +151,7 @@
     const bars = grouped.rows.map((entry, index) => {
       const added = [...entry.values.values()].reduce((sum, row) => sum + Number(row.new_listings || 0), 0);
       const removed = [...entry.values.values()].reduce((sum, row) => sum + Number(row.removed_listings || 0), 0);
-      const scale = plotHeight / maxValue;
+      const scale = (plotHeight / 2) / maxValue;
       const x = left + (grouped.rows.length < 2 ? plotWidth / 2 : (index / (grouped.rows.length - 1)) * plotWidth);
       const addedHeight = added * scale, removedHeight = removed * scale;
       return '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight / 2 - addedHeight) + '" width="' + (barWidth / 2 - 1) + '" height="' + addedHeight + '" class="flow-new"><title>' + esc(entry.period) + ': +' + added.toLocaleString() + ' new</title></rect><rect x="' + (x + 1) + '" y="' + (top + plotHeight / 2) + '" width="' + (barWidth / 2 - 1) + '" height="' + removedHeight + '" class="flow-removed"><title>' + esc(entry.period) + ': ' + removed.toLocaleString() + ' removed</title></rect>';
