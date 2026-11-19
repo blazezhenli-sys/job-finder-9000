@@ -6,7 +6,7 @@ import { events } from './pipeline-service.js';
 export type CompanySocialPlatform = 'bluesky' | 'mastodon' | 'linkedin' | 'facebook';
 type SocialLink = { id: string; employer_id: string; employer_name: string; platform: CompanySocialPlatform; profile_url: string };
 type CompanySocialPost = { sourceId: string; authorId: string; authorName: string; authorHandle: string; authorUrl: string; sourceUrl: string; text: string; publishedAt: Date; raw: unknown };
-type SocialPollResult = { status: 'completed' | 'failed'; postsSeen: number; newPosts: number; error?: string };
+type SocialPollResult = { status: 'completed' | 'failed'; postsSeen: number; newPosts: number; error?: string; retryAfterMs?: number };
 
 function jsonObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -14,6 +14,29 @@ function jsonObject(value: unknown): Record<string, unknown> {
 
 function isRsshubPlatform(platform: CompanySocialPlatform): platform is 'linkedin' | 'facebook' {
   return platform === 'linkedin' || platform === 'facebook';
+}
+
+class RsshubRateLimitError extends Error {
+  constructor(message: string, readonly retryAfterMs: number) {
+    super(message);
+    this.name = 'RsshubRateLimitError';
+  }
+}
+
+const rsshubCooldownUntil: Record<'linkedin' | 'facebook', number> = { linkedin: 0, facebook: 0 };
+
+function retryAfterMilliseconds(value: string | null): number {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : Math.max(0, timestamp - Date.now());
+}
+
+function looksRateLimited(platform: 'linkedin' | 'facebook', status: number, body: string): boolean {
+  if (status === 429) return true;
+  if (status === 503 && (platform === 'facebook' || /rate[ -]?limit|too many requests|temporarily blocked|throttl|checkpoint|blocked/i.test(body))) return true;
+  return status === 403 && /rate[ -]?limit|too many requests|temporarily blocked|throttl|checkpoint|blocked/i.test(body);
 }
 
 async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<unknown> {
@@ -195,6 +218,10 @@ async function fetchRsshub(link: SocialLink & { platform: 'linkedin' | 'facebook
   const body = await response.text();
   if (!response.ok) {
     const detail = body.replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (looksRateLimited(link.platform, response.status, body)) {
+      const retryAfterMs = Math.max(config.companySocialRsshubPollIntervalMs, config.companySocialRsshubRateLimitCooldownMs, retryAfterMilliseconds(response.headers.get('retry-after')));
+      throw new RsshubRateLimitError(`RSSHub rate limited HTTP ${response.status}${detail ? `: ${detail}` : ''}`, retryAfterMs);
+    }
     throw new Error(`RSSHub returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
   }
   return parseRsshubFeed(body, cutoff);
@@ -210,7 +237,7 @@ async function fetchAccount(link: SocialLink, cutoff: Date): Promise<CompanySoci
 async function finishTask(taskId: string, link: SocialLink, result: SocialPollResult) {
   await pool.query(`UPDATE company_social_poll_tasks SET status=$2, completed_at=now(), posts_seen=$3, new_posts=$4, error=$5 WHERE id=$1`, [taskId, result.status, result.postsSeen, result.newPosts, result.error ?? null]);
   const successIntervalMs = isRsshubPlatform(link.platform) ? config.companySocialRsshubPollIntervalMs : config.companySocialPollIntervalMs;
-  const failureIntervalMs = isRsshubPlatform(link.platform) ? config.companySocialRsshubPollIntervalMs : 3_600_000;
+  const failureIntervalMs = result.retryAfterMs ?? (isRsshubPlatform(link.platform) ? config.companySocialRsshubPollIntervalMs : 3_600_000);
   if (result.status === 'completed') {
     await pool.query(`UPDATE company_social_links SET social_poll_last_attempted_at=now(), social_poll_last_success_at=now(), social_poll_next_at=now() + ($2::text || ' milliseconds')::interval, social_poll_error=NULL, social_poll_consecutive_failures=0, updated_at=now() WHERE id=$1`, [link.id, successIntervalMs]);
   } else {
@@ -237,6 +264,13 @@ async function queueDueTasks(platforms: CompanySocialPlatform[]): Promise<Array<
 async function processTask(task: { taskId: string; link: SocialLink }) {
   await pool.query(`UPDATE company_social_poll_tasks SET status='running', started_at=now() WHERE id=$1`, [task.taskId]);
   events.emit('company-social-task', { taskId: task.taskId, employerId: task.link.employer_id, platform: task.link.platform, profileUrl: task.link.profile_url, status: 'running' });
+  if (isRsshubPlatform(task.link.platform)) {
+    const remainingCooldownMs = rsshubCooldownUntil[task.link.platform] - Date.now();
+    if (remainingCooldownMs > 0) {
+      await finishTask(task.taskId, task.link, { status: 'failed', postsSeen: 0, newPosts: 0, retryAfterMs: Math.max(config.companySocialRsshubPollIntervalMs, remainingCooldownMs), error: `Deferred after RSSHub ${task.link.platform} rate limit; no request made` });
+      return;
+    }
+  }
   const cutoff = new Date(Date.now() - config.companySocialRetentionDays * 86_400_000);
   try {
     const posts = await fetchAccount(task.link, cutoff);
@@ -250,7 +284,9 @@ async function processTask(task: { taskId: string; link: SocialLink }) {
     await finishTask(task.taskId, task.link, { status: 'completed', postsSeen: posts.length, newPosts });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await finishTask(task.taskId, task.link, { status: 'failed', postsSeen: 0, newPosts: 0, error: message });
+    const retryAfterMs = error instanceof RsshubRateLimitError ? error.retryAfterMs : undefined;
+    if (retryAfterMs && isRsshubPlatform(task.link.platform)) rsshubCooldownUntil[task.link.platform] = Date.now() + retryAfterMs;
+    await finishTask(task.taskId, task.link, { status: 'failed', postsSeen: 0, newPosts: 0, retryAfterMs, error: message });
   }
 }
 

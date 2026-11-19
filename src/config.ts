@@ -60,6 +60,7 @@ export const config = {
   companySocialRsshubPollIntervalMs: num(process.env.COMPANY_SOCIAL_RSSHUB_POLL_INTERVAL_MS, 10_800_000),
   companySocialRsshubConcurrency: Math.max(1, Math.floor(num(process.env.COMPANY_SOCIAL_RSSHUB_CONCURRENCY, 1))),
   companySocialRsshubTimeoutMs: Math.max(1_000, num(process.env.COMPANY_SOCIAL_RSSHUB_TIMEOUT_MS, 60_000)),
+  companySocialRsshubRateLimitCooldownMs: Math.max(10_800_000, num(process.env.COMPANY_SOCIAL_RSSHUB_RATE_LIMIT_COOLDOWN_MS, 21_600_000)),
   enableListingDiscovery: bool(process.env.ENABLE_LISTING_DISCOVERY, true),
   listingDiscoveryIntervalMs: num(process.env.LISTING_DISCOVERY_INTERVAL_MS, 86_400_000),
   listingDiscoveryValidationConcurrency: Math.max(1, Math.floor(num(process.env.LISTING_DISCOVERY_VALIDATION_CONCURRENCY, 4))),
