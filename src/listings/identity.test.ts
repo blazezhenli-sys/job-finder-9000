@@ -32,6 +32,28 @@ describe('company identity resolution', () => {
     expect(identity).toMatchObject({ name: 'Example Co', domain: 'example.com' });
   });
 
+  it('extracts a company domain from an encoded Greenhouse listing-content link', () => {
+    const identity = identityFromListings([{
+      providerJobId: '2', title: 'Engineer', description: '',
+      applicationUrl: 'https://job-boards.greenhouse.io/example/jobs/2', originalUrl: 'https://job-boards.greenhouse.io/example/jobs/2',
+      raw: {
+        company_name: 'Example Co',
+        content: '&lt;p&gt;Learn more at &lt;a class=&quot;c-link&quot; href=&quot;https://example.com/careers&quot;&gt;example.com/careers&lt;/a&gt;&lt;/p&gt;'
+      }
+    }]);
+    expect(identity).toMatchObject({ name: 'Example Co', domain: 'example.com', website: 'https://example.com' });
+    expect(JSON.stringify(identity.evidence)).toContain('"listingContentDomain":"example.com"');
+  });
+
+  it('extracts a company domain from a careers URL in listing text', () => {
+    const identity = identityFromListings([{
+      providerJobId: '3', title: 'Engineer', description: '',
+      applicationUrl: 'https://job-boards.greenhouse.io/example/jobs/3', originalUrl: 'https://job-boards.greenhouse.io/example/jobs/3',
+      raw: { company_name: 'Example Co', content: 'Learn more about our company at https://example.com/careers.' }
+    }]);
+    expect(identity).toMatchObject({ name: 'Example Co', domain: 'example.com' });
+  });
+
   it('does not treat relative career links as company domains', () => {
     const identity = identityFromAtsHtml('<a href="/about-us">About us</a><a href="/open-roles">Open roles</a>', 'greenhouse');
     expect(normalizeCompanyDomain('about-us')).toBe('');
