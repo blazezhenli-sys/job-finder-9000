@@ -5,8 +5,22 @@ import { fetchCompanyEnrichment } from './enrichment.js';
 import { normalizeCompanyDomain } from './identity.js';
 
 let running = false;
+const enrichmentBatchSize = 500;
+const enrichmentScanBatchSize = 1_000;
 
 type EnrichmentResult = { status: 'completed' | 'failed'; linksFound: number; careerUrl?: string; error?: string };
+
+type EmployerEnrichmentCandidate = { website?: string; verified_domain?: string; identity_domain?: string };
+
+function enrichmentWebsite(employer: EmployerEnrichmentCandidate): string {
+  const website = String(employer.website ?? '').trim();
+  if (normalizeCompanyDomain(website)) return website;
+  for (const value of [employer.verified_domain, employer.identity_domain]) {
+    const domain = normalizeCompanyDomain(String(value ?? ''));
+    if (domain) return `https://${domain}`;
+  }
+  return '';
+}
 
 async function finishTask(taskId: string, employerId: string, result: EnrichmentResult) {
   await pool.query(`UPDATE company_enrichment_tasks SET status=$2, completed_at=now(), links_found=$3, career_url=$4, error=$5 WHERE id=$1`, [taskId, result.status, result.linksFound, result.careerUrl ?? '', result.error ?? null]);
@@ -19,12 +33,23 @@ async function finishTask(taskId: string, employerId: string, result: Enrichment
 }
 
 async function queueDueTasks(): Promise<Array<{ employerId: string; taskId: string }>> {
-  const employers = await pool.query(`SELECT id, website FROM employers WHERE website <> '' AND (social_enrichment_next_at IS NULL OR social_enrichment_next_at <= now()) ORDER BY social_enrichment_next_at NULLS FIRST, created_at LIMIT 500`);
   const queued: Array<{ employerId: string; taskId: string }> = [];
-  for (const employer of employers.rows) {
-    if (!normalizeCompanyDomain(employer.website)) continue;
-    const task = await pool.query(`INSERT INTO company_enrichment_tasks (employer_id, status) VALUES ($1,'queued') ON CONFLICT DO NOTHING RETURNING id`, [employer.id]);
-    if (task.rows[0]) queued.push({ employerId: employer.id, taskId: task.rows[0].id });
+  let offset = 0;
+  while (queued.length < enrichmentBatchSize) {
+    const employers = await pool.query(`SELECT id, website, verified_domain, identity_domain FROM employers
+      WHERE (website <> '' OR verified_domain <> '' OR identity_domain <> '')
+        AND (social_enrichment_next_at IS NULL OR social_enrichment_next_at <= now())
+      ORDER BY social_enrichment_next_at NULLS FIRST, created_at, id
+      LIMIT $1 OFFSET $2`, [enrichmentScanBatchSize, offset]);
+    if (!employers.rows.length) break;
+    for (const employer of employers.rows) {
+      if (queued.length >= enrichmentBatchSize) break;
+      if (!enrichmentWebsite(employer)) continue;
+      const task = await pool.query(`INSERT INTO company_enrichment_tasks (employer_id, status) VALUES ($1,'queued') ON CONFLICT DO NOTHING RETURNING id`, [employer.id]);
+      if (task.rows[0]) queued.push({ employerId: employer.id, taskId: task.rows[0].id });
+    }
+    if (employers.rows.length < enrichmentScanBatchSize) break;
+    offset += employers.rows.length;
   }
   return queued;
 }
@@ -33,9 +58,9 @@ async function processTask(task: { employerId: string; taskId: string }) {
   await pool.query(`UPDATE company_enrichment_tasks SET status='running', started_at=now() WHERE id=$1`, [task.taskId]);
   events.emit('company-enrichment-task', { taskId: task.taskId, employerId: task.employerId, status: 'running' });
   try {
-    const employer = await pool.query('SELECT website FROM employers WHERE id=$1', [task.employerId]);
-    const website = employer.rows[0]?.website as string | undefined;
-    if (!website || !normalizeCompanyDomain(website)) throw new Error('Company has no resolved public website');
+    const employer = await pool.query('SELECT website, verified_domain, identity_domain FROM employers WHERE id=$1', [task.employerId]);
+    const website = enrichmentWebsite(employer.rows[0] ?? {});
+    if (!website) throw new Error('Company has no resolved public website');
     const enrichment = await fetchCompanyEnrichment(website);
     const links = enrichment.socialLinks;
     await withTransaction(async (client) => {
@@ -54,8 +79,17 @@ export async function enrichCompanies() {
   running = true;
   try {
     await pool.query(`UPDATE company_enrichment_tasks SET status='failed', completed_at=now(), error=COALESCE(error,'Worker stopped before task completed') WHERE status IN ('queued','running')`);
-    const queued = await queueDueTasks();
-    await runWithConcurrency(queued, config.companyEnrichmentConcurrency, processTask);
+    let totalProcessed = 0;
+    let batchNumber = 0;
+    while (true) {
+      const queued = await queueDueTasks();
+      if (!queued.length) break;
+      batchNumber += 1;
+      console.info(`Company enrichment batch ${batchNumber}: queued ${queued.length} task(s)`);
+      await runWithConcurrency(queued, config.companyEnrichmentConcurrency, processTask);
+      totalProcessed += queued.length;
+    }
+    if (totalProcessed) console.info(`Company enrichment cycle complete: processed ${totalProcessed} task(s)`);
   } finally { running = false; }
 }
 
