@@ -9,7 +9,7 @@ import { backfillListingCompensation } from './listings/salary.js';
 import { backfillListingClassification, loadTechnologyTaxonomy } from './listings/classification.js';
 import { detectMarketSignals, runDailyMarketSnapshot } from './listings/analytics.js';
 import { startCompanyEnrichment } from './listings/enrichment-worker.js';
-import { startCompanySocialPolling } from './company-social.js';
+import { startCompanySocialPolling, startCompanySocialRsshubPolling } from './company-social.js';
 
 let started = false;
 let listingTimer: NodeJS.Timeout | undefined;
@@ -18,6 +18,7 @@ let analyticsTimer: NodeJS.Timeout | undefined;
 let classificationTimer: NodeJS.Timeout | undefined;
 let companyEnrichmentTimer: NodeJS.Timeout | undefined;
 let companySocialTimer: NodeJS.Timeout | undefined;
+let companySocialRsshubTimer: NodeJS.Timeout | undefined;
 let classificationReady: Promise<void> | undefined;
 let locationSignalsReady: Promise<void> | undefined;
 
@@ -35,6 +36,7 @@ export async function startWorkers() {
   if (config.enableListings) listingTimer = startListingPolling(config.listingsPollIntervalMs);
   if (config.enableListings) companyEnrichmentTimer = startCompanyEnrichment(config.companyEnrichmentIntervalMs);
   if (config.enableCompanySocialActivity) companySocialTimer = startCompanySocialPolling(config.companySocialPollIntervalMs);
+  if (config.enableCompanySocialActivity) companySocialRsshubTimer = startCompanySocialRsshubPolling(config.companySocialRsshubPollIntervalMs);
   if (config.enableListings && config.enableListingDiscovery) discoveryTimer = await startListingDiscovery(config.listingDiscoveryIntervalMs);
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));
@@ -51,4 +53,4 @@ export async function startWorkers() {
   void deliverNotifications();
 }
 
-export function stopWorkers() { if (listingTimer) clearInterval(listingTimer); if (companyEnrichmentTimer) clearInterval(companyEnrichmentTimer); if (companySocialTimer) clearInterval(companySocialTimer); if (discoveryTimer) clearInterval(discoveryTimer); if (analyticsTimer) clearInterval(analyticsTimer); if (classificationTimer) clearInterval(classificationTimer); }
+export function stopWorkers() { if (listingTimer) clearInterval(listingTimer); if (companyEnrichmentTimer) clearInterval(companyEnrichmentTimer); if (companySocialTimer) clearInterval(companySocialTimer); if (companySocialRsshubTimer) clearInterval(companySocialRsshubTimer); if (discoveryTimer) clearInterval(discoveryTimer); if (analyticsTimer) clearInterval(analyticsTimer); if (classificationTimer) clearInterval(classificationTimer); }

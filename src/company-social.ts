@@ -3,12 +3,17 @@ import { config } from './config.js';
 import { pool } from './db.js';
 import { events } from './pipeline-service.js';
 
-type SocialLink = { id: string; employer_id: string; employer_name: string; platform: 'bluesky' | 'mastodon'; profile_url: string };
+export type CompanySocialPlatform = 'bluesky' | 'mastodon' | 'linkedin' | 'facebook';
+type SocialLink = { id: string; employer_id: string; employer_name: string; platform: CompanySocialPlatform; profile_url: string };
 type CompanySocialPost = { sourceId: string; authorId: string; authorName: string; authorHandle: string; authorUrl: string; sourceUrl: string; text: string; publishedAt: Date; raw: unknown };
 type SocialPollResult = { status: 'completed' | 'failed'; postsSeen: number; newPosts: number; error?: string };
 
 function jsonObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function isRsshubPlatform(platform: CompanySocialPlatform): platform is 'linkedin' | 'facebook' {
+  return platform === 'linkedin' || platform === 'facebook';
 }
 
 async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<unknown> {
@@ -40,17 +45,7 @@ export function parseBlueskyFeed(payload: unknown, cutoff: Date): CompanySocialP
     const did = String(author.did || '');
     const handle = String(author.handle || did);
     if (!uri || !did) continue;
-    posts.push({
-      sourceId: uri,
-      authorId: did,
-      authorName: String(author.displayName || handle),
-      authorHandle: handle,
-      authorUrl: `https://bsky.app/profile/${handle}`,
-      sourceUrl: String(post.url || `https://bsky.app/profile/${handle}/post/${rkey}`),
-      text: String(record.text),
-      publishedAt,
-      raw: itemValue
-    });
+    posts.push({ sourceId: uri, authorId: did, authorName: String(author.displayName || handle), authorHandle: handle, authorUrl: `https://bsky.app/profile/${handle}`, sourceUrl: String(post.url || `https://bsky.app/profile/${handle}/post/${rkey}`), text: String(record.text), publishedAt, raw: itemValue });
   }
   return posts;
 }
@@ -100,17 +95,7 @@ export function parseMastodonStatuses(payload: unknown, cutoff: Date): CompanySo
     const sourceId = String(status.id || '');
     if (!sourceId) continue;
     const handle = String(account.acct || account.username || '');
-    posts.push({
-      sourceId,
-      authorId: String(account.id || handle),
-      authorName: String(account.display_name || handle),
-      authorHandle: handle,
-      authorUrl: String(account.url || ''),
-      sourceUrl: String(status.url || status.uri || ''),
-      text: stripHtml(String(status.content)),
-      publishedAt,
-      raw: statusValue
-    });
+    posts.push({ sourceId, authorId: String(account.id || handle), authorName: String(account.display_name || handle), authorHandle: handle, authorUrl: String(account.url || ''), sourceUrl: String(status.url || status.uri || ''), text: stripHtml(String(status.content)), publishedAt, raw: statusValue });
   }
   return posts;
 }
@@ -138,26 +123,103 @@ async function fetchMastodon(link: SocialLink, cutoff: Date): Promise<CompanySoc
   return posts.slice(0, config.companySocialBackfillLimit);
 }
 
+function routePart(value: string): string { return decodeURIComponent(value).trim(); }
+
+export function rsshubFeedUrl(platform: 'linkedin' | 'facebook', profileUrl: string): string {
+  const parsed = new URL(profileUrl);
+  const segments = parsed.pathname.split('/').filter(Boolean).map(routePart);
+  let id = '';
+  if (platform === 'linkedin') {
+    if (segments[0]?.toLowerCase() !== 'company' || !segments[1] || segments.length > 2) throw new Error(`Unsupported LinkedIn company profile URL: ${profileUrl}`);
+    id = segments[1];
+  } else if (segments[0]?.toLowerCase() === 'pages' && segments.length === 3) {
+    id = segments.at(-1) || '';
+  } else if (segments[0]?.toLowerCase() === 'page' && segments[1] && segments.length === 2) {
+    id = segments[1];
+  } else if (segments[0]?.toLowerCase() === 'profile.php') {
+    id = parsed.searchParams.get('id') || '';
+  } else if (segments.length === 1 && !['home', 'watch', 'marketplace', 'groups', 'events', 'login', 'share', 'reel', 'stories'].includes(segments[0].toLowerCase())) {
+    id = segments[0];
+  }
+  if (!id) throw new Error(`Unsupported ${platform} profile URL: ${profileUrl}`);
+  const route = platform === 'linkedin' ? `/linkedin/company/${encodeURIComponent(id)}/posts` : `/facebook/page/${encodeURIComponent(id)}`;
+  return `${config.rsshubBaseUrl}${route}`;
+}
+
+function decodeXml(value: string): string {
+  return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1').replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16))).replace(/&#([0-9]+);/g, (_, number: string) => String.fromCodePoint(Number(number))).replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&apos;|&#39;/gi, "'");
+}
+
+function xmlTagValue(block: string, tag: string): string {
+  const escaped = tag.replace(':', '\\:');
+  const match = block.match(new RegExp(`<${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${escaped}>`, 'i'));
+  return match ? decodeXml(match[1]).trim() : '';
+}
+
+function xmlLinkValue(block: string): string {
+  const linkTag = block.match(/<link\b([^>]*)\/?>(?:<\/link>)?/i);
+  const href = linkTag?.[1].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
+  return decodeXml(href || xmlTagValue(block, 'link')).trim();
+}
+
+function feedBlocks(xml: string): string[] {
+  return [...xml.matchAll(/<(item|entry)\b[^>]*>[\s\S]*?<\/\1>/gi)].map((match) => match[0]);
+}
+
+function obviousReshare(block: string): boolean {
+  return /\b(?:repost|reblog|reshare|shared|reply(?:ing)?\s+to)\b/i.test(stripHtml(decodeXml(`${xmlTagValue(block, 'title')} ${xmlTagValue(block, 'description')} ${xmlTagValue(block, 'content:encoded')} ${xmlTagValue(block, 'content')}`)));
+}
+
+export function parseRsshubFeed(xml: string, cutoff: Date): CompanySocialPost[] {
+  const posts: CompanySocialPost[] = [];
+  const seen = new Set<string>();
+  for (const block of feedBlocks(xml)) {
+    if (obviousReshare(block)) continue;
+    const sourceUrl = xmlLinkValue(block);
+    const guid = xmlTagValue(block, 'guid') || xmlTagValue(block, 'id') || sourceUrl;
+    const publishedAt = new Date(xmlTagValue(block, 'pubDate') || xmlTagValue(block, 'published') || xmlTagValue(block, 'updated'));
+    const text = stripHtml(xmlTagValue(block, 'content:encoded') || xmlTagValue(block, 'content') || xmlTagValue(block, 'description') || xmlTagValue(block, 'title'));
+    if (!guid || !sourceUrl || !/^https?:\/\//i.test(sourceUrl) || Number.isNaN(publishedAt.getTime()) || publishedAt < cutoff || !text) continue;
+    if (seen.has(guid)) continue;
+    seen.add(guid);
+    const author = xmlTagValue(block, 'dc:creator') || xmlTagValue(block, 'author') || 'Company account';
+    posts.push({ sourceId: guid, authorId: author, authorName: author, authorHandle: '', authorUrl: '', sourceUrl, text, publishedAt, raw: { xml: block } });
+  }
+  return posts;
+}
+
+async function fetchRsshub(link: SocialLink & { platform: 'linkedin' | 'facebook' }, cutoff: Date): Promise<CompanySocialPost[]> {
+  const feedUrl = rsshubFeedUrl(link.platform, link.profile_url);
+  const response = await fetch(feedUrl, { headers: { Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml' }, signal: AbortSignal.timeout(config.companySocialRsshubTimeoutMs) });
+  if (!response.ok) throw new Error(`RSSHub returned HTTP ${response.status}`);
+  return parseRsshubFeed(await response.text(), cutoff);
+}
+
 async function fetchAccount(link: SocialLink, cutoff: Date): Promise<CompanySocialPost[]> {
-  return link.platform === 'bluesky' ? fetchBluesky(link, cutoff) : fetchMastodon(link, cutoff);
+  if (link.platform === 'bluesky') return fetchBluesky(link, cutoff);
+  if (link.platform === 'mastodon') return fetchMastodon(link, cutoff);
+  if (isRsshubPlatform(link.platform)) return fetchRsshub(link as SocialLink & { platform: 'linkedin' | 'facebook' }, cutoff);
+  throw new Error(`Unsupported company social platform: ${link.platform}`);
 }
 
 async function finishTask(taskId: string, link: SocialLink, result: SocialPollResult) {
   await pool.query(`UPDATE company_social_poll_tasks SET status=$2, completed_at=now(), posts_seen=$3, new_posts=$4, error=$5 WHERE id=$1`, [taskId, result.status, result.postsSeen, result.newPosts, result.error ?? null]);
+  const successIntervalMs = isRsshubPlatform(link.platform) ? config.companySocialRsshubPollIntervalMs : config.companySocialPollIntervalMs;
+  const failureIntervalMs = isRsshubPlatform(link.platform) ? config.companySocialRsshubPollIntervalMs : 3_600_000;
   if (result.status === 'completed') {
-    await pool.query(`UPDATE company_social_links SET social_poll_last_attempted_at=now(), social_poll_last_success_at=now(), social_poll_next_at=now() + ($2::text || ' milliseconds')::interval, social_poll_error=NULL, social_poll_consecutive_failures=0, updated_at=now() WHERE id=$1`, [link.id, config.companySocialPollIntervalMs]);
+    await pool.query(`UPDATE company_social_links SET social_poll_last_attempted_at=now(), social_poll_last_success_at=now(), social_poll_next_at=now() + ($2::text || ' milliseconds')::interval, social_poll_error=NULL, social_poll_consecutive_failures=0, updated_at=now() WHERE id=$1`, [link.id, successIntervalMs]);
   } else {
-    await pool.query(`UPDATE company_social_links SET social_poll_last_attempted_at=now(), social_poll_next_at=now() + interval '1 hour', social_poll_error=$2, social_poll_consecutive_failures=social_poll_consecutive_failures+1, updated_at=now() WHERE id=$1`, [link.id, result.error ?? 'Social polling failed']);
+    await pool.query(`UPDATE company_social_links SET social_poll_last_attempted_at=now(), social_poll_next_at=now() + ($2::text || ' milliseconds')::interval, social_poll_error=$3, social_poll_consecutive_failures=social_poll_consecutive_failures+1, updated_at=now() WHERE id=$1`, [link.id, failureIntervalMs, result.error ?? 'Social polling failed']);
   }
   events.emit('company-social-task', { taskId, employerId: link.employer_id, platform: link.platform, ...result });
 }
 
-async function queueDueTasks(): Promise<Array<{ taskId: string; link: SocialLink }>> {
+async function queueDueTasks(platforms: CompanySocialPlatform[]): Promise<Array<{ taskId: string; link: SocialLink }>> {
   const links = await pool.query(`SELECT l.id, l.employer_id, e.name AS employer_name, l.platform, l.profile_url
     FROM company_social_links l JOIN employers e ON e.id=l.employer_id
-    WHERE l.is_active AND l.platform IN ('bluesky','mastodon')
+    WHERE l.is_active AND l.platform = ANY($1::text[])
       AND (l.social_poll_next_at IS NULL OR l.social_poll_next_at <= now())
-    ORDER BY l.social_poll_next_at NULLS FIRST, l.last_seen_at DESC LIMIT 500`);
+    ORDER BY l.social_poll_next_at NULLS FIRST, l.last_seen_at DESC LIMIT 500`, [platforms]);
   const queued: Array<{ taskId: string; link: SocialLink }> = [];
   for (const row of links.rows as SocialLink[]) {
     const task = await pool.query(`INSERT INTO company_social_poll_tasks (employer_id, social_link_id, platform, profile_url, status)
@@ -194,18 +256,34 @@ async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (i
   }));
 }
 
+async function pollCompanySocialLane(platforms: CompanySocialPlatform[], concurrency: number) {
+  await pool.query(`DELETE FROM company_social_posts WHERE published_at < now() - ($1::text || ' days')::interval`, [config.companySocialRetentionDays]);
+  const queued = await queueDueTasks(platforms);
+  await runWithConcurrency(queued, concurrency, processTask);
+}
+
 let running = false;
 export async function pollCompanySocial() {
   if (running) return;
   running = true;
-  try {
-    await pool.query(`DELETE FROM company_social_posts WHERE published_at < now() - ($1::text || ' days')::interval`, [config.companySocialRetentionDays]);
-    const queued = await queueDueTasks();
-    await runWithConcurrency(queued, config.companySocialConcurrency, processTask);
-  } finally { running = false; }
+  try { await pollCompanySocialLane(['bluesky', 'mastodon'], config.companySocialConcurrency); }
+  finally { running = false; }
+}
+
+let rsshubRunning = false;
+export async function pollCompanySocialRsshub() {
+  if (rsshubRunning) return;
+  rsshubRunning = true;
+  try { await pollCompanySocialLane(['linkedin', 'facebook'], config.companySocialRsshubConcurrency); }
+  finally { rsshubRunning = false; }
 }
 
 export function startCompanySocialPolling(intervalMs: number) {
   void pollCompanySocial().catch((error) => console.error('company social polling failed', error));
   return setInterval(() => void pollCompanySocial().catch((error) => console.error('company social polling failed', error)), intervalMs);
+}
+
+export function startCompanySocialRsshubPolling(intervalMs: number) {
+  void pollCompanySocialRsshub().catch((error) => console.error('RSSHub company social polling failed', error));
+  return setInterval(() => void pollCompanySocialRsshub().catch((error) => console.error('RSSHub company social polling failed', error)), intervalMs);
 }

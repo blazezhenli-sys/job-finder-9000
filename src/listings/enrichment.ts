@@ -74,7 +74,7 @@ function normalizeSocialUrl(value: string, sourceUrl: string): string {
     const platform = socialPlatform(parsed.href);
     if (isUnsafeCompanyUrl(parsed) || !platform || !isSocialProfileUrl(parsed.href, platform)) return '';
     parsed.hash = '';
-    parsed.search = '';
+    if (!(platform === 'facebook' && parsed.pathname.toLowerCase() === '/profile.php' && parsed.searchParams.has('id'))) parsed.search = '';
     parsed.hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
     parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
     return parsed.href;

@@ -29,4 +29,9 @@ describe('company social enrichment', () => {
   it('finds an explicit company careers link, including an ATS destination', () => {
     expect(extractCareerUrl('<a href="/about">About</a><a href="https://jobs.ashbyhq.com/example">View open roles</a>', 'https://example.com')).toBe('https://jobs.ashbyhq.com/example');
   });
+
+  it('preserves Facebook page IDs in profile.php links', () => {
+    expect(extractSocialLinks('<a href="https://facebook.com/profile.php?id=12345">Facebook</a>', 'https://example.com'))
+      .toEqual([{ platform: 'facebook', profileUrl: 'https://facebook.com/profile.php?id=12345', sourceUrl: 'https://example.com' }]);
+  });
 });
