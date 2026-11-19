@@ -36,6 +36,34 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+  rsshub:
+    image: diygod/rsshub:chromium-bundled
+    restart: unless-stopped
+    ports:
+      - "${RSSHUB_PORT:-1200}:1200"
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: redis
+      REDIS_URL: redis://rsshub-redis:6379/
+    depends_on:
+      rsshub-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1200/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  rsshub-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - rsshub-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -52,8 +80,4 @@ services:
       retries: 10
 volumes:
   hiring-postgres:
-
-networks:
-  default:
-    name: coolify
-    external: true
+  rsshub-redis-data:

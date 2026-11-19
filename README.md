@@ -10,6 +10,8 @@ Self-hosted, deterministic hiring-signal monitoring with company social activity
 
 Coolify can deploy this repository as a Docker Compose project. Set `APP_PORT` to the host port you want to publish; the application remains on internal container port 3000. Keep the Postgres volume persistent. Set the same environment variables in Coolify; SMTP values stay server-side and are never returned by the API.
 
+The Compose stack also includes RSSHub with bundled Chromium at `http://your-server:1200` by default; change `RSSHUB_PORT` if that host port is already in use. RSSHub uses the persistent `rsshub-redis-data` volume for its Redis cache.
+
 For local development, run PostgreSQL, set `DATABASE_URL`, then use `npm install && npm run dev`. Set `DEV_MODE=true` to enable the “Load sample posts” action in the dashboard. The app runs migrations automatically at startup.
 
 ## Architecture and limitations
