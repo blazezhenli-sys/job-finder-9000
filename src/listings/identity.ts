@@ -226,7 +226,7 @@ function nameFromTitle(title: string, provider: AtsProvider): string {
     ?? cleaned.match(/^(.+?)\s+(?:careers?|jobs?|job openings?)$/i)?.[1];
   const candidates = [explicit ?? '', ...cleaned.split(/\s*[|–—-]\s*/g)];
   const providerName = provider === 'greenhouse' ? 'greenhouse' : provider;
-  return candidates.map((candidate) => candidate.replace(new RegExp(`\\b${providerName}\\b`, 'ig'), '').replace(/[|]+$/, '').trim()).find((candidate) => candidate && !genericNames.test(candidate) && candidate.length > 2) ?? '';
+  return candidates.map((candidate) => candidate.replace(new RegExp(`\\b${providerName}\\b`, 'ig'), '').replace(/[|]+$/, '').trim()).find((candidate) => candidate && !genericNames.test(candidate) && !genericPageName(candidate) && candidate.length > 2) ?? '';
 }
 
 function anchorWebsite(html: string): string {
@@ -255,7 +255,7 @@ function companyNameFromDomain(domain: string): string {
 
 function genericPageName(value: string): boolean {
   const normalized = normalizeCompanyName(value);
-  return !normalized || /^(explore|open|join|careers|jobs|jobopenings|careersat|joinourteam|workwithus)/.test(normalized);
+  return !normalized || /^(explore|open|join|careers|jobs|jobopenings|careersat|joinourteam|workwithus|pagenotfound|pagetitle|justamoment)/.test(normalized);
 }
 
 export function identityFromAtsHtml(html: string, provider: AtsProvider): CompanyIdentity {
@@ -274,7 +274,7 @@ export function identityFromAtsHtml(html: string, provider: AtsProvider): Compan
   const titleName = nameFromTitle(titleValue(html), provider);
   const domain = anchorWebsite(html);
   if (siteName && !genericNames.test(siteName)) observations.push({ name: siteName, confidence: domain ? 'high' : 'medium', sources: ['ats_board_page'], evidence: { meta: 'site_name', name: siteName } });
-  if (titleName) observations.push({ name: titleName, confidence: domain ? 'high' : 'medium', sources: ['ats_board_page'], evidence: { title: titleValue(html), name: titleName } });
+  if (titleName) observations.push({ name: titleName, confidence: domain ? 'high' : 'medium', sources: ['ats_board_title'], evidence: { title: titleValue(html), name: titleName } });
   if (domain) observations.push({ domain, website: websiteForDomain(domain), confidence: titleName || siteName ? 'high' : 'medium', sources: ['ats_board_page'], evidence: { anchorDomain: domain } });
   return mergeIdentities(observations);
 }

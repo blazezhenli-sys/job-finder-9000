@@ -27,4 +27,15 @@ describe('employer board resolution', () => {
     }, gladly.id);
     expect(result).toBe(gladly);
   });
+
+  it('repairs a board attached to an ATS-host identity using a clear board title', () => {
+    const vendorAttached: EmployerRow = {
+      id: 'prri', name: 'PRRI', website: 'https://greenhouse.com', verified_domain: '',
+      identity_domain: 'greenhouse.com', identity_name_source: 'ats_board_title', identity_domain_source: 'ats_board_page'
+    };
+    const result = matchEmployer([vendorAttached], {
+      name: 'CoreWeave', confidence: 'medium', sources: ['ats_board_title'], evidence: { observations: [{ title: 'Jobs at CoreWeave' }] }
+    }, vendorAttached.id);
+    expect(result).toBeUndefined();
+  });
 });

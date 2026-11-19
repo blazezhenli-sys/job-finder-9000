@@ -42,4 +42,10 @@ describe('company identity resolution', () => {
     const identity = identityFromAtsHtml('<title>Careers at Securly | Remote-First K-12 EdTech Jobs</title>', 'greenhouse');
     expect(identity.name).toBe('Securly');
   });
+
+  it('marks a Greenhouse company title as title-backed identity evidence', () => {
+    const identity = identityFromAtsHtml('<title>Jobs at PRRI</title>', 'greenhouse');
+    expect(identity).toMatchObject({ name: 'PRRI' });
+    expect(identity.sources).toContain('ats_board_title');
+  });
 });
