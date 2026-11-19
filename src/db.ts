@@ -7,7 +7,7 @@ import { defaultHeuristics } from './pipeline.js';
 import type { DetectionRule, Preferences } from './types.js';
 
 const { Pool } = pg;
-export const pool = new Pool({ connectionString: config.databaseUrl, max: 10, idleTimeoutMillis: 30_000 });
+export const pool = new Pool({ connectionString: config.databaseUrl, max: config.databasePoolMax, idleTimeoutMillis: 30_000 });
 
 const migrationLock = [873291, 20261118];
 let migrationPromise: Promise<void> | undefined;

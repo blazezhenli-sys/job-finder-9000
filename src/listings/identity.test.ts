@@ -6,6 +6,8 @@ describe('company identity resolution', () => {
     expect(normalizeCompanyName('Example, Inc.')).toBe('example');
     expect(normalizeCompanyDomain('https://www.example.com/careers')).toBe('example.com');
     expect(normalizeCompanyDomain('https://jobs.ashbyhq.com/example')).toBe('');
+    expect(normalizeCompanyDomain('https://www.greenhouse.com')).toBe('');
+    expect(normalizeCompanyDomain('https://s8-recruiting.cdn.greenhouse.io/logo.png')).toBe('');
   });
 
   it('extracts a company name and domain from organization JSON-LD', () => {
@@ -28,5 +30,22 @@ describe('company identity resolution', () => {
       raw: { company_name: 'Example Co', company: { website: 'https://example.com' } }
     }]);
     expect(identity).toMatchObject({ name: 'Example Co', domain: 'example.com' });
+  });
+
+  it('does not treat relative career links as company domains', () => {
+    const identity = identityFromAtsHtml('<a href="/about-us">About us</a><a href="/open-roles">Open roles</a>', 'greenhouse');
+    expect(normalizeCompanyDomain('about-us')).toBe('');
+    expect(identity.domain).toBeUndefined();
+  });
+
+  it('keeps the company portion of a descriptive careers title', () => {
+    const identity = identityFromAtsHtml('<title>Careers at Securly | Remote-First K-12 EdTech Jobs</title>', 'greenhouse');
+    expect(identity.name).toBe('Securly');
+  });
+
+  it('marks a Greenhouse company title as title-backed identity evidence', () => {
+    const identity = identityFromAtsHtml('<title>Jobs at PRRI</title>', 'greenhouse');
+    expect(identity).toMatchObject({ name: 'PRRI' });
+    expect(identity.sources).toContain('ats_board_title');
   });
 });
