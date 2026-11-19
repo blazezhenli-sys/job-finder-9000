@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { pool, withTransaction } from '../db.js';
 import { events } from '../pipeline-service.js';
 import type { AtsProvider } from '../types.js';
+import { fetchAtsBoard } from './ats.js';
 import { resolveAtsBoardIdentity } from './identity.js';
 import { ensureEmployerForBoard } from './employer-resolution.js';
 
@@ -23,12 +24,6 @@ let requestGate = Promise.resolve();
 let discoveryRunning = false;
 let opportunityListener: ((data: unknown) => void) | undefined;
 let discoveryRetryTimer: NodeJS.Timeout | undefined;
-
-function boardUrl(provider: DiscoveryProvider, identifier: string) {
-  if (provider === 'greenhouse') return `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(identifier)}/jobs`;
-  if (provider === 'ashby') return `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(identifier)}`;
-  return `https://api.lever.co/v0/postings/${encodeURIComponent(identifier)}?mode=json`;
-}
 
 function publicBoardUrl(provider: DiscoveryProvider, identifier: string) {
   if (provider === 'greenhouse') return `https://boards.greenhouse.io/${encodeURIComponent(identifier)}`;
@@ -255,9 +250,19 @@ async function importCandidate(row: { id: string; provider: DiscoveryProvider; b
 }
 
 async function validateCandidate(row: { id: string; provider: DiscoveryProvider; board_identifier: string; board_url: string; employer_name: string; discovery_source: string; validation_attempts: number }) {
-  const response = await request(boardUrl(row.provider, row.board_identifier), { method: 'HEAD', headers: { Accept: 'application/json' } }, 2);
-  const valid = response.status >= 200 && response.status < 300;
-  await pool.query(`UPDATE listing_discovery_candidates SET validation_attempts=validation_attempts+1, last_validation_at=now(), last_validation_status=$2, status=CASE WHEN $2 BETWEEN 200 AND 299 THEN 'validated' WHEN $2=404 THEN 'rejected' ELSE 'candidate' END, next_validation_at=CASE WHEN $2 BETWEEN 200 AND 299 OR $2=404 THEN now() ELSE now() + ((LEAST(validation_attempts+1, 6) * 30)::text || ' seconds')::interval END, last_error=CASE WHEN $2 BETWEEN 200 AND 299 OR $2=404 THEN NULL ELSE $3 END, updated_at=now() WHERE id=$1`, [row.id, response.status, valid ? null : `HTTP ${response.status}`]);
+  let status = 200;
+  let errorMessage: string | null = null;
+  try {
+    // HEAD responses are not a reliable indication that the listings endpoint
+    // works. Use the exact GET and parser that the polling worker uses.
+    await fetchAtsBoard(row.provider, row.board_identifier);
+  } catch (error) {
+    errorMessage = error instanceof Error ? error.message : String(error);
+    const matchedStatus = errorMessage.match(/HTTP (\d{3})/);
+    status = matchedStatus ? Number(matchedStatus[1]) : 0;
+  }
+  const valid = status >= 200 && status < 300;
+  await pool.query(`UPDATE listing_discovery_candidates SET validation_attempts=validation_attempts+1, last_validation_at=now(), last_validation_status=$2, status=CASE WHEN $2 BETWEEN 200 AND 299 THEN 'validated' WHEN $2=404 THEN 'rejected' ELSE 'candidate' END, next_validation_at=CASE WHEN $2 BETWEEN 200 AND 299 OR $2=404 THEN now() ELSE now() + ((LEAST(validation_attempts+1, 6) * 30)::text || ' seconds')::interval END, last_error=CASE WHEN $2 BETWEEN 200 AND 299 OR $2=404 THEN NULL ELSE $3 END, updated_at=now() WHERE id=$1`, [row.id, status, valid ? null : errorMessage ?? `HTTP ${status}`]);
   if (valid) await importCandidate(row);
   return valid;
 }

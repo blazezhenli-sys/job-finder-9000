@@ -3,7 +3,7 @@ import { config } from '../config.js';
 
 export interface AtsAdapter {
   provider: AtsProvider;
-  fetch(board: JobBoard): Promise<NormalizedJobListing[]>;
+  fetch(board: Pick<JobBoard, 'boardIdentifier'>): Promise<NormalizedJobListing[]>;
 }
 
 const userAgent = 'hiring-signal-discovery-listings/0.1';
@@ -245,3 +245,8 @@ export class AdzunaAdapter implements AtsAdapter {
 }
 
 export function adapterFor(provider: AtsProvider): AtsAdapter { return provider === 'greenhouse' ? new GreenhouseAdapter() : provider === 'ashby' ? new AshbyAdapter() : provider === 'lever' ? new LeverAdapter() : provider === 'remotive' ? new RemotiveAdapter() : new AdzunaAdapter(); }
+
+/** Fetch a board through the same provider-specific GET path used by polling. */
+export async function fetchAtsBoard(provider: AtsProvider, boardIdentifier: string): Promise<NormalizedJobListing[]> {
+  return adapterFor(provider).fetch({ boardIdentifier });
+}

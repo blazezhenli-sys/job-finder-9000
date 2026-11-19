@@ -84,7 +84,16 @@ async function queuePollTask(board: JobBoard): Promise<string | null> {
 
 async function markFailure(board: JobBoard, error: unknown): Promise<string> {
   const message = error instanceof Error ? error.message : String(error);
-  await pool.query(`UPDATE job_boards SET last_attempted_poll=now(), consecutive_failure_count=consecutive_failure_count+1, last_error=$2, updated_at=now() WHERE id=$1`, [board.id, message]);
+  // Archive-derived boards are useful discovery candidates, but a repeated
+  // provider 404 means the board no longer belongs in the active poll pool.
+  // Keep the first failures visible and only retire after three consecutive
+  // 404s; any successful poll resets the counter and keeps the board active.
+  const retireAfter404 = board.discoverySource.startsWith('discovery:') && /ATS request returned HTTP 404\b/.test(message);
+  await pool.query(`UPDATE job_boards
+    SET status=CASE WHEN $3 AND consecutive_failure_count + 1 >= 3 THEN 'disabled' ELSE status END,
+        last_attempted_poll=now(), consecutive_failure_count=consecutive_failure_count+1,
+        last_error=$2, updated_at=now()
+    WHERE id=$1`, [board.id, message, retireAfter404]);
   events.emit('listing-health', { boardId: board.id, provider: board.provider, error: message });
   return message;
 }
