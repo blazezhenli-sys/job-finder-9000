@@ -40,7 +40,7 @@ services:
     image: diygod/rsshub:chromium-bundled
     restart: unless-stopped
     ports:
-      - "${RSSHUB_PORT:-1200}:1200"
+      - ":1200"
     environment:
       NODE_ENV: production
       CACHE_TYPE: redis
