@@ -203,19 +203,20 @@
     const width = 900, height = 230, left = 42, right = 16, top = 18, bottom = 34;
     const plotWidth = width - left - right, plotHeight = height - top - bottom;
     const maxValue = Math.max(1, ...grouped.rows.map((entry) => [...entry.values.values()].reduce((sum, row) => sum + Number(row.new_listings || 0) + Number(row.removed_listings || 0), 0)));
-    const barWidth = Math.max(4, plotWidth / Math.max(1, grouped.rows.length) * .55);
+    const slotWidth = plotWidth / Math.max(1, grouped.rows.length);
+    const barWidth = Math.max(4, Math.min(32, slotWidth * .7));
     const hasFlow = grouped.rows.some((entry) => [...entry.values.values()].some((row) => Number(row.new_listings || 0) > 0 || Number(row.removed_listings || 0) > 0));
     const bars = grouped.rows.map((entry, index) => {
       const added = [...entry.values.values()].reduce((sum, row) => sum + Number(row.new_listings || 0), 0);
       const removed = [...entry.values.values()].reduce((sum, row) => sum + Number(row.removed_listings || 0), 0);
       const scale = (plotHeight / 2) / maxValue;
-      const x = left + (grouped.rows.length < 2 ? plotWidth / 2 : (index / (grouped.rows.length - 1)) * plotWidth);
+      const x = left + slotWidth * (index + .5);
       const addedHeight = added * scale, removedHeight = removed * scale;
       return '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight / 2 - addedHeight) + '" width="' + (barWidth / 2 - 1) + '" height="' + addedHeight + '" class="flow-new chart-hover-target" data-tooltip="' + esc('New observed: +' + added.toLocaleString()) + '"><title>' + esc(entry.period) + ': +' + added.toLocaleString() + ' new</title></rect><rect x="' + (x + 1) + '" y="' + (top + plotHeight / 2) + '" width="' + (barWidth / 2 - 1) + '" height="' + removedHeight + '" class="flow-removed chart-hover-target" data-tooltip="' + esc('Removed observed: ' + removed.toLocaleString()) + '"><title>' + esc(entry.period) + ': ' + removed.toLocaleString() + ' removed</title></rect>';
     }).join('');
     const labels = grouped.rows.filter((entry, index) => index === 0 || index === grouped.rows.length - 1 || index % Math.max(1, Math.floor(grouped.rows.length / 4)) === 0).map((entry) => {
       const index = grouped.periods.indexOf(entry.period);
-      const x = left + (grouped.rows.length < 2 ? plotWidth / 2 : (index / (grouped.rows.length - 1)) * plotWidth);
+      const x = left + slotWidth * (index + .5);
       return '<text x="' + x + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(String(entry.period).slice(0, 10)) + '</text>';
     }).join('');
     return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="New and removed openings"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight / 2) + '" y2="' + (top + plotHeight / 2) + '" class="chart-axis"></line>' + bars + (hasFlow ? '' : '<text x="' + (width / 2) + '" y="' + (top + plotHeight / 2 - 8) + '" text-anchor="middle">No new or removed openings recorded</text>') + labels + '</svg><div class="market-flow-legend"><span><i class="flow-new-swatch"></i>New observed</span><span><i class="flow-removed-swatch"></i>Removed observed</span></div></div>';
