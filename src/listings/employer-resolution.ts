@@ -73,7 +73,9 @@ async function updateIdentity(client: PoolClient, employer: EmployerRow, identit
   const name = identity.name || provisionalName || '';
   const domain = identity.domain ? normalizeCompanyDomain(identity.domain) : '';
   const nameSource = identity.sources.find((source) => source === 'ats_board_page' || source === 'ats_board_title' || source === 'ats_payload' || source === 'ats_redirect') || (name ? 'ats_slug' : 'legacy');
-  const domainSource = domain ? (identity.sources.includes('ats_redirect') ? 'ats_redirect' : identity.sources.includes('ats_board_page') ? 'ats_board_page' : 'ats_payload') : '';
+  const domainSource = domain
+    ? (identity.sources.includes('domain_candidate') ? 'domain_candidate' : identity.sources.includes('ats_redirect') ? 'ats_redirect' : identity.sources.includes('ats_board_page') ? 'ats_board_page' : 'ats_payload')
+    : '';
   const assignments: string[] = ['identity_last_observed_at=now()', 'identity_evidence=$1', 'identity_confidence=$2'];
   const values: unknown[] = [JSON.stringify(identity.evidence), identity.confidence];
   if (name && !shouldPreserve(employer.identity_name_source) && (employer.identity_name_source === 'legacy' || employer.identity_name_source === 'ats_slug' || !employer.name)) {
@@ -102,7 +104,7 @@ export async function ensureEmployerForBoard(client: PoolClient, input: BoardIde
   const name = input.identity.name || input.provisionalName || input.boardIdentifier;
   const domain = input.identity.domain ? normalizeCompanyDomain(input.identity.domain) : '';
   const inserted = await client.query(`INSERT INTO employers (name, website, identity_domain, identity_name_source, identity_domain_source, identity_confidence, identity_evidence, identity_last_observed_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,now()) RETURNING id`, [name, domain ? `https://${domain}` : '', domain, input.identity.sources.find((source) => source === 'ats_board_page' || source === 'ats_board_title' || source === 'ats_payload' || source === 'ats_redirect') ?? (name ? 'ats_slug' : 'legacy'), domain ? (input.identity.sources.includes('ats_redirect') ? 'ats_redirect' : input.identity.sources.includes('ats_board_page') ? 'ats_board_page' : 'ats_payload') : 'legacy', input.identity.confidence, JSON.stringify(input.identity.evidence)]);
+    VALUES ($1,$2,$3,$4,$5,$6,$7,now()) RETURNING id`, [name, domain ? `https://${domain}` : '', domain, input.identity.sources.find((source) => source === 'ats_board_page' || source === 'ats_board_title' || source === 'ats_payload' || source === 'ats_redirect' || source === 'domain_candidate') ?? (name ? 'ats_slug' : 'legacy'), domain ? (input.identity.sources.includes('domain_candidate') ? 'domain_candidate' : input.identity.sources.includes('ats_redirect') ? 'ats_redirect' : input.identity.sources.includes('ats_board_page') ? 'ats_board_page' : 'ats_payload') : 'legacy', input.identity.confidence, JSON.stringify(input.identity.evidence)]);
   const employerId = inserted.rows[0].id as string;
   if (input.boardId) await client.query('UPDATE job_boards SET employer_id=$1, updated_at=now() WHERE id=$2', [employerId, input.boardId]);
   return employerId;

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { identityFromAtsHtml, identityFromListings, normalizeCompanyDomain, normalizeCompanyName } from './identity.js';
+import { describe, expect, it, vi } from 'vitest';
+import { candidateCompanyDomains, identityFromAtsHtml, identityFromListings, normalizeCompanyDomain, normalizeCompanyName, resolveAtsBoardIdentity } from './identity.js';
 
 describe('company identity resolution', () => {
   it('normalizes company names and keeps ATS hosts out of company domains', () => {
@@ -8,6 +8,12 @@ describe('company identity resolution', () => {
     expect(normalizeCompanyDomain('https://jobs.ashbyhq.com/example')).toBe('');
     expect(normalizeCompanyDomain('https://www.greenhouse.com')).toBe('');
     expect(normalizeCompanyDomain('https://s8-recruiting.cdn.greenhouse.io/logo.png')).toBe('');
+  });
+
+  it('generates a bounded set of company-name domain candidates', () => {
+    expect(candidateCompanyDomains('Fashion Nova', 'fashionnova')).toEqual([
+      'fashionnova.com', 'fashionnova.ai', 'fashionnova.co', 'fashionnova.io', 'fashionnova.org'
+    ]);
   });
 
   it('extracts a company name and domain from organization JSON-LD', () => {
@@ -78,5 +84,23 @@ describe('company identity resolution', () => {
     const identity = identityFromAtsHtml('<title>Jobs at PRRI</title>', 'greenhouse');
     expect(identity).toMatchObject({ name: 'PRRI' });
     expect(identity.sources).toContain('ats_board_title');
+  });
+
+  it('validates a candidate domain against the returned company page', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, url: 'https://job-boards.greenhouse.io/fashionnova', text: async () => '<title>Jobs at Fashion Nova</title>' })
+      .mockResolvedValueOnce({ ok: true, url: 'https://fashionnova.com/', headers: new Headers({ 'content-type': 'text/html' }), text: async () => '<title>Fashion Nova | Careers</title>' });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const identity = await resolveAtsBoardIdentity('greenhouse', 'fashionnova', [{
+        providerJobId: '5', title: 'Engineer', description: '', companyName: 'Fashion Nova',
+        applicationUrl: 'https://job-boards.greenhouse.io/fashionnova/jobs/5', originalUrl: 'https://job-boards.greenhouse.io/fashionnova/jobs/5',
+        raw: { company_name: 'Fashion Nova' }
+      }]);
+      expect(identity).toMatchObject({ domain: 'fashionnova.com', website: 'https://fashionnova.com', confidence: 'high' });
+      expect(identity.sources).toContain('domain_candidate');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

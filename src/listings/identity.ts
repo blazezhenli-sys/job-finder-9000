@@ -329,6 +329,77 @@ export function mergeCompanyIdentities(...values: CompanyIdentity[]): CompanyIde
   return mergeIdentities(values);
 }
 
+const candidateDomainSuffixes = ['com', 'ai', 'co', 'io', 'org'];
+const candidateDiscoveryCache = new Map<string, { expiresAt: number; identity?: CompanyIdentity }>();
+const candidateDiscoveryTtlMs = 24 * 60 * 60 * 1_000;
+
+function candidateToken(value: string): string {
+  const token = normalizeCompanyName(value);
+  return token.length >= 3 && token.length <= 40 && !genericPageName(value) ? token : '';
+}
+
+export function candidateCompanyDomains(companyName: string, boardIdentifier: string): string[] {
+  const tokens = [...new Set([candidateToken(boardIdentifier), candidateToken(companyName)].filter(Boolean))];
+  return candidateDomainSuffixes.flatMap((suffix) => tokens.map((token) => `${token}.${suffix}`));
+}
+
+function pageNames(html: string): string[] {
+  const names = [metaValue(html, 'og:site_name'), metaValue(html, 'og:title'), metaValue(html, 'application-name'), titleValue(html)];
+  for (const value of jsonLdValues(html)) {
+    if (typeof value.name === 'string') names.push(value.name);
+    for (const key of ['organization', 'hiringOrganization', 'publisher']) {
+      const nested = record(value[key]);
+      if (nested && typeof nested.name === 'string') names.push(nested.name);
+    }
+  }
+  return names.filter(Boolean);
+}
+
+function pageMatchesCompany(html: string, companyName: string): boolean {
+  const target = normalizeCompanyName(companyName);
+  if (target.length < 3 || genericPageName(companyName)) return false;
+  return pageNames(html).some((value) => {
+    const observed = normalizeCompanyName(value);
+    return observed === target || (target.length >= 5 && (observed.includes(target) || target.includes(observed)));
+  });
+}
+
+async function discoverCandidateDomain(provider: string, identifier: string, companyName: string): Promise<CompanyIdentity | undefined> {
+  const candidates = candidateCompanyDomains(companyName, identifier).slice(0, 6);
+  if (!candidates.length) return undefined;
+  const cacheKey = `${provider}:${identifier.toLowerCase()}:${normalizeCompanyName(companyName)}`;
+  const cached = candidateDiscoveryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.identity;
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(`https://${candidate}`, {
+        redirect: 'follow',
+        headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'hiring-signal-discovery-identity/0.1' },
+        signal: AbortSignal.timeout(8_000)
+      });
+      if (!response.ok || !response.url) continue;
+      const domain = normalizeCompanyDomain(response.url);
+      if (!domain || isAtsDomain(response.url)) continue;
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType && !/html|xhtml/i.test(contentType)) continue;
+      const html = await response.text();
+      if (!pageMatchesCompany(html, companyName)) continue;
+      const identity: CompanyIdentity = {
+        name: companyName,
+        domain,
+        website: websiteForDomain(domain),
+        confidence: 'medium',
+        sources: ['domain_candidate'],
+        evidence: { candidateUrl: `https://${candidate}`, finalUrl: response.url, companyName, boardIdentifier: identifier }
+      };
+      candidateDiscoveryCache.set(cacheKey, { expiresAt: Date.now() + candidateDiscoveryTtlMs, identity });
+      return identity;
+    } catch { /* Candidate discovery is best effort and must not fail polling. */ }
+  }
+  candidateDiscoveryCache.set(cacheKey, { expiresAt: Date.now() + candidateDiscoveryTtlMs });
+  return undefined;
+}
+
 function publicBoardUrl(provider: Extract<AtsProvider, 'greenhouse' | 'ashby' | 'lever'>, identifier: string): string {
   if (provider === 'greenhouse') return `https://boards.greenhouse.io/${encodeURIComponent(identifier)}`;
   if (provider === 'ashby') return `https://jobs.ashbyhq.com/${encodeURIComponent(identifier)}`;
@@ -338,11 +409,12 @@ function publicBoardUrl(provider: Extract<AtsProvider, 'greenhouse' | 'ashby' | 
 export async function resolveAtsBoardIdentity(provider: Extract<AtsProvider, 'greenhouse' | 'ashby' | 'lever'>, identifier: string, listings: NormalizedJobListing[] = []): Promise<CompanyIdentity> {
   const fromListings = identityFromListings(listings);
   if (fromListings.name && fromListings.domain) return fromListings;
+  let merged = fromListings;
   try {
     const response = await fetch(publicBoardUrl(provider, identifier), { headers: { Accept: 'text/html', 'User-Agent': 'hiring-signal-discovery-identity/0.1' }, signal: AbortSignal.timeout(15_000) });
     const finalDomain = normalizeCompanyDomain(response.url);
     const pageIdentity = response.ok ? identityFromAtsHtml(await response.text(), provider) : { confidence: 'unknown' as const, sources: [], evidence: {} };
-    const merged = mergeCompanyIdentities(fromListings, pageIdentity);
+    merged = mergeCompanyIdentities(fromListings, pageIdentity);
     if (finalDomain) {
       const redirectName = companyNameFromDomain(finalDomain);
       const name = merged.name && !genericPageName(merged.name) ? merged.name : redirectName;
@@ -355,7 +427,10 @@ export async function resolveAtsBoardIdentity(provider: Extract<AtsProvider, 'gr
         evidence: { ...merged.evidence, redirect: { url: response.url, domain: finalDomain, name: redirectName } }
       };
     }
-    if (response.ok) return merged;
   } catch { /* Identity discovery should never make a listing poll fail. */ }
-  return fromListings;
+  if (!merged.domain && merged.name) {
+    const candidate = await discoverCandidateDomain(provider, identifier, merged.name);
+    if (candidate) return mergeCompanyIdentities(merged, candidate);
+  }
+  return merged;
 }
