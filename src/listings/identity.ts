@@ -330,17 +330,23 @@ export function mergeCompanyIdentities(...values: CompanyIdentity[]): CompanyIde
 }
 
 const candidateDomainSuffixes = ['com', 'ai', 'co', 'io', 'org'];
+const genericCandidateTokens = new Set(['apply', 'board', 'boards', 'careers', 'company', 'engineering', 'job', 'jobs', 'jobboard', 'jobboards', 'team']);
 const candidateDiscoveryCache = new Map<string, { expiresAt: number; identity?: CompanyIdentity }>();
 const candidateDiscoveryTtlMs = 24 * 60 * 60 * 1_000;
 
 function candidateToken(value: string): string {
   const token = normalizeCompanyName(value);
-  return token.length >= 3 && token.length <= 40 && !genericPageName(value) ? token : '';
+  return token.length >= 3 && token.length <= 40 && !genericCandidateTokens.has(token) && !genericPageName(value) ? token : '';
 }
 
 export function candidateCompanyDomains(companyName: string, boardIdentifier: string): string[] {
   const tokens = [...new Set([candidateToken(boardIdentifier), candidateToken(companyName)].filter(Boolean))];
   return candidateDomainSuffixes.flatMap((suffix) => tokens.map((token) => `${token}.${suffix}`));
+}
+
+function companyNameFromBoardIdentifier(identifier: string): string {
+  const token = candidateToken(identifier);
+  return token ? identifier.replace(/[._-]+/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase()).trim() : '';
 }
 
 function pageNames(html: string): string[] {
@@ -357,7 +363,7 @@ function pageNames(html: string): string[] {
 
 function pageMatchesCompany(html: string, companyName: string): boolean {
   const target = normalizeCompanyName(companyName);
-  if (target.length < 3 || genericPageName(companyName)) return false;
+  if (target.length < 3 || !candidateToken(companyName)) return false;
   return pageNames(html).some((value) => {
     const observed = normalizeCompanyName(value);
     return observed === target || (target.length >= 5 && (observed.includes(target) || target.includes(observed)));
@@ -428,8 +434,9 @@ export async function resolveAtsBoardIdentity(provider: Extract<AtsProvider, 'gr
       };
     }
   } catch { /* Identity discovery should never make a listing poll fail. */ }
-  if (!merged.domain && merged.name) {
-    const candidate = await discoverCandidateDomain(provider, identifier, merged.name);
+  if (!merged.domain) {
+    const candidateName = merged.name || companyNameFromBoardIdentifier(identifier);
+    const candidate = candidateName ? await discoverCandidateDomain(provider, identifier, candidateName) : undefined;
     if (candidate) return mergeCompanyIdentities(merged, candidate);
   }
   return merged;

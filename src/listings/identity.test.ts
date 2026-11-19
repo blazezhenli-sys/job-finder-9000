@@ -14,6 +14,7 @@ describe('company identity resolution', () => {
     expect(candidateCompanyDomains('Fashion Nova', 'fashionnova')).toEqual([
       'fashionnova.com', 'fashionnova.ai', 'fashionnova.co', 'fashionnova.io', 'fashionnova.org'
     ]);
+    expect(candidateCompanyDomains('', 'jobs')).toEqual([]);
   });
 
   it('extracts a company name and domain from organization JSON-LD', () => {
@@ -98,6 +99,24 @@ describe('company identity resolution', () => {
         raw: { company_name: 'Fashion Nova' }
       }]);
       expect(identity).toMatchObject({ domain: 'fashionnova.com', website: 'https://fashionnova.com', confidence: 'high' });
+      expect(identity.sources).toContain('domain_candidate');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('can validate a non-generic board slug when the listing has no company name', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, url: 'https://job-boards.greenhouse.io/fixify', text: async () => '<title>Open Roles</title>' })
+      .mockResolvedValueOnce({ ok: true, url: 'https://fixify.com/', headers: new Headers({ 'content-type': 'text/html' }), text: async () => '<title>Fixify | Careers</title>' });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const identity = await resolveAtsBoardIdentity('greenhouse', 'fixify', [{
+        providerJobId: '6', title: 'Engineer', description: '',
+        applicationUrl: 'https://job-boards.greenhouse.io/fixify/jobs/6', originalUrl: 'https://job-boards.greenhouse.io/fixify/jobs/6',
+        raw: {}
+      }]);
+      expect(identity).toMatchObject({ name: 'Fixify', domain: 'fixify.com' });
       expect(identity.sources).toContain('domain_candidate');
     } finally {
       vi.unstubAllGlobals();
