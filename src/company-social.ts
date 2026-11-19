@@ -130,7 +130,8 @@ export function rsshubFeedUrl(platform: 'linkedin' | 'facebook', profileUrl: str
   const segments = parsed.pathname.split('/').filter(Boolean).map(routePart);
   let id = '';
   if (platform === 'linkedin') {
-    if (segments[0]?.toLowerCase() !== 'company' || !segments[1] || segments.length > 2) throw new Error(`Unsupported LinkedIn company profile URL: ${profileUrl}`);
+    const hasPostsSuffix = segments.length === 3 && segments[2].toLowerCase() === 'posts';
+    if (segments[0]?.toLowerCase() !== 'company' || !segments[1] || (segments.length !== 2 && !hasPostsSuffix)) throw new Error(`Unsupported LinkedIn company profile URL: ${profileUrl}`);
     id = segments[1];
   } else if (segments[0]?.toLowerCase() === 'pages' && segments.length === 3) {
     id = segments.at(-1) || '';
@@ -191,8 +192,12 @@ export function parseRsshubFeed(xml: string, cutoff: Date): CompanySocialPost[] 
 async function fetchRsshub(link: SocialLink & { platform: 'linkedin' | 'facebook' }, cutoff: Date): Promise<CompanySocialPost[]> {
   const feedUrl = rsshubFeedUrl(link.platform, link.profile_url);
   const response = await fetch(feedUrl, { headers: { Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml' }, signal: AbortSignal.timeout(config.companySocialRsshubTimeoutMs) });
-  if (!response.ok) throw new Error(`RSSHub returned HTTP ${response.status}`);
-  return parseRsshubFeed(await response.text(), cutoff);
+  const body = await response.text();
+  if (!response.ok) {
+    const detail = body.replace(/\s+/g, ' ').trim().slice(0, 240);
+    throw new Error(`RSSHub returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+  }
+  return parseRsshubFeed(body, cutoff);
 }
 
 async function fetchAccount(link: SocialLink, cutoff: Date): Promise<CompanySocialPost[]> {

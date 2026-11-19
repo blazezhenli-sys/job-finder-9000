@@ -39,6 +39,7 @@ describe('social source adapters', () => {
 
   it('builds RSSHub routes for LinkedIn and Facebook company profiles', () => {
     expect(rsshubFeedUrl('linkedin', 'https://www.linkedin.com/company/example/')).toBe('http://rsshub:1200/linkedin/company/example/posts');
+    expect(rsshubFeedUrl('linkedin', 'https://linkedin.com/company/vitallyaus/posts')).toBe('http://rsshub:1200/linkedin/company/vitallyaus/posts');
     expect(rsshubFeedUrl('facebook', 'https://www.facebook.com/example')).toBe('http://rsshub:1200/facebook/page/example');
     expect(rsshubFeedUrl('facebook', 'https://www.facebook.com/pages/Example/12345')).toBe('http://rsshub:1200/facebook/page/12345');
     expect(rsshubFeedUrl('facebook', 'https://www.facebook.com/profile.php?id=12345')).toBe('http://rsshub:1200/facebook/page/12345');
