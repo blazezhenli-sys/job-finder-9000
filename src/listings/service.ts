@@ -140,15 +140,53 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
       if (engineeringSpecialties.length) engineeringCount += 1;
       const compensation = normalizeCompensation(listing.compensation);
       const isNew = !existingIds.has(listing.providerJobId);
+      const previous = existing.rows.find((row) => row.provider_job_id === listing.providerJobId);
       if (isNew) newCount += 1;
       if (isNew && engineeringSpecialties.length) newEngineeringCount += 1;
       const result = await client.query(`INSERT INTO job_listings
         (board_id, provider, provider_job_id, title, description_html, description, department, team, location, secondary_locations, remote_mode, geographic_restrictions, employment_type, seniority, compensation, compensation_min, compensation_max, compensation_currency, compensation_period, compensation_estimated, salary_backfilled_at, application_url, original_url, published_at, source_updated_at, first_observed_at, last_observed_at, last_successful_board_check, is_active, consecutive_missing_checks, personal_relevance, relevance_breakdown, location_signals, location_fit, location_fit_score, location_fit_reasons, raw, status, company_name, engineering_specialties, technologies, job_category, primary_specialty, classification_version, classification_method, classification_backfilled_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now(),$21,$22,$23,$24,COALESCE((SELECT first_observed_at FROM job_listings WHERE board_id=$1 AND provider_job_id=$3),$25),$25,$25,true,0,$26,$27,$28,$29,$30,$31,$32,'new',$33,$34,$35,$36,$37,$38,$39,now())
-        ON CONFLICT (board_id, provider_job_id) DO UPDATE SET title=EXCLUDED.title, description_html=EXCLUDED.description_html, description=EXCLUDED.description, department=EXCLUDED.department, team=EXCLUDED.team, location=EXCLUDED.location, secondary_locations=EXCLUDED.secondary_locations, remote_mode=EXCLUDED.remote_mode, geographic_restrictions=EXCLUDED.geographic_restrictions, employment_type=EXCLUDED.employment_type, seniority=EXCLUDED.seniority, compensation=EXCLUDED.compensation, compensation_min=EXCLUDED.compensation_min, compensation_max=EXCLUDED.compensation_max, compensation_currency=EXCLUDED.compensation_currency, compensation_period=EXCLUDED.compensation_period, compensation_estimated=EXCLUDED.compensation_estimated, salary_backfilled_at=now(), application_url=EXCLUDED.application_url, original_url=EXCLUDED.original_url, published_at=EXCLUDED.published_at, source_updated_at=EXCLUDED.source_updated_at, last_observed_at=EXCLUDED.last_observed_at, last_successful_board_check=EXCLUDED.last_successful_board_check, is_active=true, consecutive_missing_checks=0, personal_relevance=EXCLUDED.personal_relevance, relevance_breakdown=EXCLUDED.relevance_breakdown, location_signals=EXCLUDED.location_signals, location_fit=EXCLUDED.location_fit, location_fit_score=EXCLUDED.location_fit_score, location_fit_reasons=EXCLUDED.location_fit_reasons, raw=EXCLUDED.raw, company_name=EXCLUDED.company_name, engineering_specialties=EXCLUDED.engineering_specialties, technologies=EXCLUDED.technologies, job_category=EXCLUDED.job_category, primary_specialty=EXCLUDED.primary_specialty, classification_version=EXCLUDED.classification_version, classification_method=EXCLUDED.classification_method, classification_backfilled_at=now(), updated_at=now()
+        ON CONFLICT (board_id, provider_job_id) DO UPDATE SET title=EXCLUDED.title, description_html=EXCLUDED.description_html, description=EXCLUDED.description, department=EXCLUDED.department, team=EXCLUDED.team, location=EXCLUDED.location, secondary_locations=EXCLUDED.secondary_locations, remote_mode=EXCLUDED.remote_mode, geographic_restrictions=EXCLUDED.geographic_restrictions, employment_type=EXCLUDED.employment_type, seniority=EXCLUDED.seniority, compensation=EXCLUDED.compensation, compensation_min=EXCLUDED.compensation_min, compensation_max=EXCLUDED.compensation_max, compensation_currency=EXCLUDED.compensation_currency, compensation_period=EXCLUDED.compensation_period, compensation_estimated=EXCLUDED.compensation_estimated, salary_backfilled_at=now(), application_url=EXCLUDED.application_url, original_url=EXCLUDED.original_url, published_at=EXCLUDED.published_at, source_updated_at=EXCLUDED.source_updated_at, last_observed_at=EXCLUDED.last_observed_at, is_active=true, consecutive_missing_checks=0, personal_relevance=EXCLUDED.personal_relevance, relevance_breakdown=EXCLUDED.relevance_breakdown, location_signals=EXCLUDED.location_signals, location_fit=EXCLUDED.location_fit, location_fit_score=EXCLUDED.location_fit_score, location_fit_reasons=EXCLUDED.location_fit_reasons, raw=EXCLUDED.raw, company_name=EXCLUDED.company_name, engineering_specialties=EXCLUDED.engineering_specialties, technologies=EXCLUDED.technologies, job_category=EXCLUDED.job_category, primary_specialty=EXCLUDED.primary_specialty, classification_version=EXCLUDED.classification_version, classification_method=EXCLUDED.classification_method, classification_backfilled_at=now(), updated_at=now()
+        WHERE job_listings.title IS DISTINCT FROM EXCLUDED.title
+          OR job_listings.description_html IS DISTINCT FROM EXCLUDED.description_html
+          OR job_listings.description IS DISTINCT FROM EXCLUDED.description
+          OR job_listings.department IS DISTINCT FROM EXCLUDED.department
+          OR job_listings.team IS DISTINCT FROM EXCLUDED.team
+          OR job_listings.location IS DISTINCT FROM EXCLUDED.location
+          OR job_listings.secondary_locations IS DISTINCT FROM EXCLUDED.secondary_locations
+          OR job_listings.remote_mode IS DISTINCT FROM EXCLUDED.remote_mode
+          OR job_listings.geographic_restrictions IS DISTINCT FROM EXCLUDED.geographic_restrictions
+          OR job_listings.employment_type IS DISTINCT FROM EXCLUDED.employment_type
+          OR job_listings.seniority IS DISTINCT FROM EXCLUDED.seniority
+          OR job_listings.compensation IS DISTINCT FROM EXCLUDED.compensation
+          OR job_listings.compensation_min IS DISTINCT FROM EXCLUDED.compensation_min
+          OR job_listings.compensation_max IS DISTINCT FROM EXCLUDED.compensation_max
+          OR job_listings.compensation_currency IS DISTINCT FROM EXCLUDED.compensation_currency
+          OR job_listings.compensation_period IS DISTINCT FROM EXCLUDED.compensation_period
+          OR job_listings.compensation_estimated IS DISTINCT FROM EXCLUDED.compensation_estimated
+          OR job_listings.application_url IS DISTINCT FROM EXCLUDED.application_url
+          OR job_listings.original_url IS DISTINCT FROM EXCLUDED.original_url
+          OR job_listings.published_at IS DISTINCT FROM EXCLUDED.published_at
+          OR job_listings.source_updated_at IS DISTINCT FROM EXCLUDED.source_updated_at
+          OR job_listings.is_active IS DISTINCT FROM true
+          OR job_listings.consecutive_missing_checks IS DISTINCT FROM 0
+          OR job_listings.personal_relevance IS DISTINCT FROM EXCLUDED.personal_relevance
+          OR job_listings.relevance_breakdown IS DISTINCT FROM EXCLUDED.relevance_breakdown
+          OR job_listings.location_signals IS DISTINCT FROM EXCLUDED.location_signals
+          OR job_listings.location_fit IS DISTINCT FROM EXCLUDED.location_fit
+          OR job_listings.location_fit_score IS DISTINCT FROM EXCLUDED.location_fit_score
+          OR job_listings.location_fit_reasons IS DISTINCT FROM EXCLUDED.location_fit_reasons
+          OR job_listings.raw IS DISTINCT FROM EXCLUDED.raw
+          OR job_listings.company_name IS DISTINCT FROM EXCLUDED.company_name
+          OR job_listings.engineering_specialties IS DISTINCT FROM EXCLUDED.engineering_specialties
+          OR job_listings.technologies IS DISTINCT FROM EXCLUDED.technologies
+          OR job_listings.job_category IS DISTINCT FROM EXCLUDED.job_category
+          OR job_listings.primary_specialty IS DISTINCT FROM EXCLUDED.primary_specialty
+          OR job_listings.classification_version IS DISTINCT FROM EXCLUDED.classification_version
+          OR job_listings.classification_method IS DISTINCT FROM EXCLUDED.classification_method
         RETURNING id`, [board.id, board.provider, listing.providerJobId, listing.title, listing.descriptionHtml ?? '', listing.description, listing.department ?? '', listing.team ?? '', listing.location ?? '', JSON.stringify(listing.secondaryLocations ?? []), listing.remoteMode ?? 'unknown', JSON.stringify(listing.geographicRestrictions ?? []), listing.employmentType ?? '', listing.seniority ?? '', JSON.stringify(listing.compensation ?? {}), compensation.min ?? null, compensation.max ?? null, compensation.currency ?? '', compensation.period ?? '', Boolean(compensation.estimated), listing.applicationUrl, listing.originalUrl, listing.publishedAt, listing.updatedAt, checkedAt, analysis.personalRelevance, JSON.stringify(analysis.relevanceBreakdown), JSON.stringify(analysis.locationSignals), analysis.locationFit, analysis.locationFitScore, JSON.stringify(analysis.locationFitReasons), JSON.stringify(listing.raw), listing.companyName ?? '', JSON.stringify(engineeringSpecialties), JSON.stringify(technologies), classification.jobCategory, classification.primarySpecialty, classification.version, classification.method]);
-      const listingId = result.rows[0].id as string;
-      const previous = existing.rows.find((row) => row.provider_job_id === listing.providerJobId);
+      const listingId = result.rows[0]?.id as string | undefined ?? previous?.id as string | undefined;
+      if (!listingId) throw new Error(`Listing upsert returned no id for ${listing.providerJobId}`);
       const currentCompensation = { min: compensation.min ?? null, max: compensation.max ?? null, currency: compensation.currency ?? '', period: compensation.period ?? '' };
       const currentDescriptionHash = descriptionHash(listing.description);
       if (isNew) {
@@ -163,7 +201,7 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
         if (JSON.stringify(previousCompensation) !== JSON.stringify(currentCompensation)) await recordListingEvent(client, listingId, board.id, 'compensation_changed', checkedAt, listing.updatedAt, previousCompensation, currentCompensation);
         if (previous.description_hash !== currentDescriptionHash) await recordListingEvent(client, listingId, board.id, 'description_changed', checkedAt, listing.updatedAt, { hash: previous.description_hash }, { hash: currentDescriptionHash });
       }
-      if (isNew && !baseline && notificationEligible(analysis, preferences)) await client.query('INSERT INTO listing_notifications (listing_id) VALUES ($1) ON CONFLICT (listing_id) DO NOTHING', [result.rows[0].id]);
+      if (isNew && !baseline && notificationEligible(analysis, preferences)) await client.query('INSERT INTO listing_notifications (listing_id) VALUES ($1) ON CONFLICT (listing_id) DO NOTHING', [listingId]);
     }
     for (const row of existing.rows) {
       if (row.is_active && !observedIds.includes(row.provider_job_id) && Number(row.consecutive_missing_checks) + 1 >= 3) {
