@@ -121,7 +121,7 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
     return result;
   }
   if (identityNeedsRefresh(board)) {
-    const identity = await resolveAtsBoardIdentity(board.provider as 'greenhouse' | 'ashby' | 'lever', board.boardIdentifier, listings);
+    const identity = await resolveAtsBoardIdentity(board.provider as 'greenhouse' | 'ashby' | 'lever', board.boardIdentifier, listings, board.employerName);
     await withTransaction(async (client) => resolveExistingBoardEmployer(client, {
       boardId: board.id,
       currentEmployerId: board.employerId,

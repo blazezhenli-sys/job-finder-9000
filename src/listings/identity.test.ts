@@ -122,4 +122,23 @@ describe('company identity resolution', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('uses the current employer name when the board slug is not the company name', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, url: 'https://job-boards.greenhouse.io/sagent-board', text: async () => '<title>Open Roles</title>' })
+      .mockResolvedValueOnce({ ok: false, url: 'https://sagent-board.com', headers: new Headers(), text: async () => '' })
+      .mockResolvedValueOnce({ ok: true, url: 'https://sagent.com/', headers: new Headers({ 'content-type': 'text/html' }), text: async () => '<title>Sagent - Consumer-First Mortgage Loan Servicing Software</title>' });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const identity = await resolveAtsBoardIdentity('greenhouse', 'sagent-board', [{
+        providerJobId: '7', title: 'Engineer', description: '',
+        applicationUrl: 'https://job-boards.greenhouse.io/sagent-board/jobs/7', originalUrl: 'https://job-boards.greenhouse.io/sagent-board/jobs/7',
+        raw: {}
+      }], 'Sagent');
+      expect(identity).toMatchObject({ name: 'Sagent', domain: 'sagent.com' });
+      expect(identity.sources).toContain('domain_candidate');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

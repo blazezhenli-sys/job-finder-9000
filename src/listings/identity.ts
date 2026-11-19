@@ -339,8 +339,8 @@ function candidateToken(value: string): string {
   return token.length >= 3 && token.length <= 40 && !genericCandidateTokens.has(token) && !genericPageName(value) ? token : '';
 }
 
-export function candidateCompanyDomains(companyName: string, boardIdentifier: string): string[] {
-  const tokens = [...new Set([candidateToken(boardIdentifier), candidateToken(companyName)].filter(Boolean))];
+export function candidateCompanyDomains(companyName: string, boardIdentifier: string, fallbackName = ''): string[] {
+  const tokens = [...new Set([candidateToken(boardIdentifier), candidateToken(companyName), candidateToken(fallbackName)].filter(Boolean))];
   return candidateDomainSuffixes.flatMap((suffix) => tokens.map((token) => `${token}.${suffix}`));
 }
 
@@ -370,10 +370,11 @@ function pageMatchesCompany(html: string, companyName: string): boolean {
   });
 }
 
-async function discoverCandidateDomain(provider: string, identifier: string, companyName: string): Promise<CompanyIdentity | undefined> {
-  const candidates = candidateCompanyDomains(companyName, identifier).slice(0, 6);
+async function discoverCandidateDomain(provider: string, identifier: string, companyNames: string[]): Promise<CompanyIdentity | undefined> {
+  const names = [...new Set(companyNames.map((name) => name.trim()).filter(Boolean))];
+  const candidates = candidateCompanyDomains(names[0] ?? '', identifier, names[1] ?? '').slice(0, 6);
   if (!candidates.length) return undefined;
-  const cacheKey = `${provider}:${identifier.toLowerCase()}:${normalizeCompanyName(companyName)}`;
+  const cacheKey = `${provider}:${identifier.toLowerCase()}:${names.map(normalizeCompanyName).join('|')}`;
   const cached = candidateDiscoveryCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.identity;
   for (const candidate of candidates) {
@@ -389,14 +390,15 @@ async function discoverCandidateDomain(provider: string, identifier: string, com
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType && !/html|xhtml/i.test(contentType)) continue;
       const html = await response.text();
-      if (!pageMatchesCompany(html, companyName)) continue;
+      const matchedName = names.find((name) => pageMatchesCompany(html, name));
+      if (!matchedName) continue;
       const identity: CompanyIdentity = {
-        name: companyName,
+        name: matchedName,
         domain,
         website: websiteForDomain(domain),
         confidence: 'medium',
         sources: ['domain_candidate'],
-        evidence: { candidateUrl: `https://${candidate}`, finalUrl: response.url, companyName, boardIdentifier: identifier }
+        evidence: { candidateUrl: `https://${candidate}`, finalUrl: response.url, companyName: matchedName, boardIdentifier: identifier }
       };
       candidateDiscoveryCache.set(cacheKey, { expiresAt: Date.now() + candidateDiscoveryTtlMs, identity });
       return identity;
@@ -412,7 +414,7 @@ function publicBoardUrl(provider: Extract<AtsProvider, 'greenhouse' | 'ashby' | 
   return `https://jobs.lever.co/${encodeURIComponent(identifier)}`;
 }
 
-export async function resolveAtsBoardIdentity(provider: Extract<AtsProvider, 'greenhouse' | 'ashby' | 'lever'>, identifier: string, listings: NormalizedJobListing[] = []): Promise<CompanyIdentity> {
+export async function resolveAtsBoardIdentity(provider: Extract<AtsProvider, 'greenhouse' | 'ashby' | 'lever'>, identifier: string, listings: NormalizedJobListing[] = [], fallbackName = ''): Promise<CompanyIdentity> {
   const fromListings = identityFromListings(listings);
   if (fromListings.name && fromListings.domain) return fromListings;
   let merged = fromListings;
@@ -435,8 +437,8 @@ export async function resolveAtsBoardIdentity(provider: Extract<AtsProvider, 'gr
     }
   } catch { /* Identity discovery should never make a listing poll fail. */ }
   if (!merged.domain) {
-    const candidateName = merged.name || companyNameFromBoardIdentifier(identifier);
-    const candidate = candidateName ? await discoverCandidateDomain(provider, identifier, candidateName) : undefined;
+    const candidateNames = [merged.name, companyNameFromBoardIdentifier(identifier), fallbackName].filter((name): name is string => Boolean(name));
+    const candidate = candidateNames.length ? await discoverCandidateDomain(provider, identifier, candidateNames) : undefined;
     if (candidate) return mergeCompanyIdentities(merged, candidate);
   }
   return merged;

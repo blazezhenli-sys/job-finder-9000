@@ -233,7 +233,7 @@ async function extractExistingOpportunityUrls(jobId: string, since?: Date) {
 }
 
 async function importCandidate(row: { id: string; provider: DiscoveryProvider; board_identifier: string; board_url: string; employer_name: string; discovery_source: string }) {
-  const identity = await resolveAtsBoardIdentity(row.provider, row.board_identifier);
+  const identity = await resolveAtsBoardIdentity(row.provider, row.board_identifier, [], row.employer_name);
   await withTransaction(async (client) => {
     const existingBoard = await client.query('SELECT id, employer_id FROM job_boards WHERE provider=$1 AND board_identifier=$2', [row.provider, row.board_identifier]);
     const employerId = await ensureEmployerForBoard(client, {
