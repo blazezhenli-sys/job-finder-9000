@@ -19,6 +19,7 @@ const socialHosts: Array<[SocialPlatform, Set<string>]> = [
 ];
 
 const socialHostsByName = new Map(socialHosts.flatMap(([platform, hosts]) => [...hosts].map((host) => [host, platform] as const)));
+const instagramNonProfileRoutes = new Set(['accounts', 'about', 'ar', 'challenge', 'direct', 'developer', 'emails', 'explore', 'legal', 'oauth', 'p', 'privacy', 'reel', 'reels', 'session', 'stories', 'tv', 'web']);
 
 function text(value: unknown): string { return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''; }
 
@@ -58,10 +59,20 @@ function socialPlatform(value: string): SocialPlatform | undefined {
   return undefined;
 }
 
+function isSocialProfileUrl(value: string, platform: SocialPlatform): boolean {
+  if (platform !== 'instagram') return true;
+  try {
+    const segments = new URL(value).pathname.split('/').filter(Boolean);
+    const handle = segments[0]?.toLowerCase() ?? '';
+    return segments.length === 1 && /^[a-z0-9._]{1,30}$/i.test(handle) && !instagramNonProfileRoutes.has(handle);
+  } catch { return false; }
+}
+
 function normalizeSocialUrl(value: string, sourceUrl: string): string {
   try {
     const parsed = new URL(value, sourceUrl);
-    if (isUnsafeCompanyUrl(parsed) || !socialPlatform(parsed.href)) return '';
+    const platform = socialPlatform(parsed.href);
+    if (isUnsafeCompanyUrl(parsed) || !platform || !isSocialProfileUrl(parsed.href, platform)) return '';
     parsed.hash = '';
     parsed.search = '';
     parsed.hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
