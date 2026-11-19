@@ -17,6 +17,15 @@ describe('company social enrichment', () => {
     expect(links).toEqual([{ platform: 'bluesky', profileUrl: 'https://bsky.app/profile/example.com', sourceUrl: 'https://example.com' }]);
   });
 
+  it('ignores Instagram posts and other content routes', () => {
+    const links = extractSocialLinks(`<a href="https://instagram.com/example_company">Profile</a>
+      <a href="https://instagram.com/p/ABC123/">Post</a>
+      <a href="https://www.instagram.com/reel/XYZ789/">Reel</a>
+      <a href="https://instagram.com/stories/example_company/123456/">Story</a>
+      <a href="https://instagram.com/explore/tags/hiring/">Explore</a>`, 'https://example.com');
+    expect(links).toEqual([{ platform: 'instagram', profileUrl: 'https://instagram.com/example_company', sourceUrl: 'https://example.com' }]);
+  });
+
   it('finds an explicit company careers link, including an ATS destination', () => {
     expect(extractCareerUrl('<a href="/about">About</a><a href="https://jobs.ashbyhq.com/example">View open roles</a>', 'https://example.com')).toBe('https://jobs.ashbyhq.com/example');
   });

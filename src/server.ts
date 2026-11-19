@@ -421,7 +421,7 @@ app.get('/api/listing-poll-tasks', async (request) => {
   const query = request.query as { limit?: string; historyLimit?: string };
   const activeLimit = Math.min(500, Math.max(1, Number(query.limit) || 200));
   const historyLimit = Math.min(200, Math.max(1, Number(query.historyLimit) || 100));
-  const select = `SELECT t.*, b.provider, b.board_identifier, b.board_url, e.name AS employer_name,
+  const select = `SELECT t.*, e.id AS employer_id, b.provider, b.board_identifier, b.board_url, e.name AS employer_name,
       ROUND(EXTRACT(EPOCH FROM (COALESCE(t.completed_at, now()) - t.started_at)) * 1000)::int AS duration_ms`;
   const [active, history] = await Promise.all([
     pool.query(`${select}, ROW_NUMBER() OVER (ORDER BY CASE t.status WHEN 'running' THEN 0 ELSE 1 END, t.queued_at)::int AS queue_position

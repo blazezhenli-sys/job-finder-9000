@@ -292,7 +292,6 @@ async function loadCompanyEnrichmentTasks() {
   const completed = data.history || [];
   const running = active.filter((task) => task.status === 'running').length;
   const queued = active.length - running;
-  const taskRow = (task) => `<div class="task-row"><div><strong>${esc(task.employer_name)}</strong><div class="subtle">${esc(task.company_website || 'No website recorded')}</div><div class="health-detail">${task.status === 'queued' ? `Queue position ${task.queue_position} · queued ${date(task.queued_at)}` : task.status === 'running' ? `Current task · started ${date(task.started_at)}` : `${task.links_found || 0} social links · ${task.career_url ? 'career page found · ' : ''}${task.duration_ms ? `${Math.round(task.duration_ms / 1000)}s` : '—'} · ${date(task.completed_at)}`}${task.error ? ` · <span class="error-text">${esc(task.error)}</span>` : ''}</div></div><span class="pill task-${esc(task.status)}">${esc(task.status)}</span></div>`;
   $('#task-panel').innerHTML = taskPanelMarkup(data, 'enrichment');
   $('#refresh-task-panel')?.addEventListener('click', () => loadTaskPanel('enrichment').catch(console.error));
 }
