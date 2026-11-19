@@ -273,7 +273,7 @@
     document.querySelector('#market-evidence-companies').innerHTML = '<h3>Contributing employers</h3>' + ((data.companies || []).length ? data.companies.map((company) => '<div class="health-row"><a class="source-link market-evidence-company" href="#" data-company-id="' + esc(company.id) + '">' + esc(company.name) + '</a></div>').join('') : '<p class="subtle">No company evidence recorded.</p>');
     document.querySelector('#market-evidence-listings').innerHTML = '<h3>Supporting listings</h3>' + ((data.evidence || []).length ? data.evidence.map((listing) => '<div class="market-evidence-listing"><div><strong>' + esc(listing.title) + '</strong><div class="subtle">' + esc(listing.employer_name) + ' · ' + esc(listing.provider) + ' · ' + esc(listing.location || 'Location unknown') + '</div></div><a class="source-link" href="' + esc(listing.application_url || listing.original_url || '#') + '" target="_blank" rel="noreferrer">Source ↗</a></div>').join('') : '<p class="subtle">No listing evidence recorded.</p>');
     document.querySelector('#market-evidence-pagination').innerHTML = '';
-    document.querySelectorAll('.market-evidence-company').forEach((link) => link.addEventListener('click', (event) => { event.preventDefault(); openCompany(link.dataset.companyId).catch(console.error); }));
+    document.querySelectorAll('.market-evidence-company').forEach((link) => link.addEventListener('click', (event) => { event.preventDefault(); openCompanyFromEvidence(link.dataset.companyId).catch(console.error); }));
   }
 
   function render(data, currentData = null) {
@@ -395,7 +395,7 @@
       document.querySelector('#market-evidence-companies').innerHTML = '<h3>Contributing employers</h3>' + ((data.companies || []).length ? data.companies.map((company) => '<div class="health-row"><a class="source-link market-evidence-company" href="#" data-company-id="' + esc(company.employer_id) + '">' + esc(company.employer_name) + '</a><span>' + Number(company.listings || 0).toLocaleString() + ' listings · ' + Number(company.engineering || 0).toLocaleString() + ' engineering</span></div>').join('') : '<p class="subtle">No employers match this evidence view.</p>');
       document.querySelector('#market-evidence-listings').innerHTML = '<h3>Supporting listings</h3>' + ((data.evidence || []).length ? data.evidence.map((listing) => '<div class="market-evidence-listing"><div><strong>' + esc(listing.title) + '</strong><div class="subtle">' + esc(listing.employer_name) + ' · ' + esc(listing.provider) + ' · ' + esc(listing.location || 'Location unknown') + '</div></div><a class="source-link" href="' + esc(listing.application_url || listing.original_url || '#') + '" target="_blank" rel="noreferrer">Source ↗</a></div>').join('') : '<p class="subtle">No listings match this evidence view.</p>');
       document.querySelector('#market-evidence-pagination').innerHTML = '<span class="subtle">' + Number(data.evidence?.length || 0).toLocaleString() + ' shown</span><div><button id="market-evidence-prev" class="button secondary" type="button" ' + (state.evidencePage < 1 ? 'disabled' : '') + '>Previous</button><button id="market-evidence-next" class="button secondary" type="button" ' + ((data.evidence || []).length < 25 ? 'disabled' : '') + '>Next</button></div>';
-      document.querySelectorAll('.market-evidence-company').forEach((link) => link.addEventListener('click', (event) => { event.preventDefault(); openCompany(link.dataset.companyId).catch(console.error); }));
+      document.querySelectorAll('.market-evidence-company').forEach((link) => link.addEventListener('click', (event) => { event.preventDefault(); openCompanyFromEvidence(link.dataset.companyId).catch(console.error); }));
       document.querySelector('#market-evidence-prev').addEventListener('click', () => { state.evidencePage -= 1; loadEvidence().catch(console.error); });
       document.querySelector('#market-evidence-next').addEventListener('click', () => { state.evidencePage += 1; loadEvidence().catch(console.error); });
     } catch (error) {
@@ -424,6 +424,7 @@
     document.querySelector('#market-evidence').classList.add('hidden');
     document.body.classList.remove('market-evidence-open');
   }
+  function openCompanyFromEvidence(id) { closeEvidence(); return openCompany(id); }
   document.querySelector('#market-evidence-close').addEventListener('click', closeEvidence);
   document.querySelector('[data-close-market-evidence]').addEventListener('click', closeEvidence);
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !document.querySelector('#market-evidence').classList.contains('hidden')) closeEvidence(); });
