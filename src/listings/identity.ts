@@ -162,7 +162,7 @@ export function identityFromListings(listings: NormalizedJobListing[]): CompanyI
     const rawContent = record(listing.raw)?.content;
     const content = [typeof rawContent === 'string' ? rawContent : '', listing.descriptionHtml ?? ''].filter(Boolean).join('\n');
     const decodedContent = decodeHtml(content);
-    const contentDomain = anchorWebsite(decodedContent) || textWebsite(decodedContent);
+    const contentDomain = listingContentWebsite(decodedContent, listing.companyName || fromPayload.name || '');
     const contentIdentity: CompanyIdentity = contentDomain
       ? { domain: contentDomain, website: websiteForDomain(contentDomain), confidence: 'medium', sources: ['ats_payload'], evidence: { listingContentDomain: contentDomain } }
       : { confidence: 'unknown', sources: [], evidence: {} };
@@ -261,21 +261,37 @@ function anchorWebsite(html: string): string {
   return best?.domain ?? '';
 }
 
-function textWebsite(value: string): string {
+function listingContentWebsite(value: string, companyName: string): string {
+  const companyKey = normalizeCompanyName(companyName);
+  const domainMatchesCompany = (domain: string) => {
+    if (!companyKey) return false;
+    return domain.split('.').some((part) => normalizeCompanyName(part) === companyKey || (companyKey.length >= 5 && normalizeCompanyName(part).includes(companyKey)));
+  };
+  const trustedPath = (href: string) => {
+    try { return /\b(?:careers?|jobs?|openings?|opportunities|join|work-with-us)\b/i.test(new URL(href).pathname); }
+    catch { return false; }
+  };
+  const anchors = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
   let best: { domain: string; score: number } | undefined;
+  for (const match of value.matchAll(anchors)) {
+    const attributes = match[1];
+    const href = decodeHtml(attributes.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1] ?? '').trim();
+    const domain = normalizeCompanyDomain(href);
+    if (!domain) continue;
+    let score = trustedPath(href) ? 12 : 0;
+    if (domainMatchesCompany(domain)) score += 8;
+    const label = text(match[2].replace(/<[^>]+>/g, ''));
+    if (/\b(?:company|corporate|website|homepage|visit us|our site)\b/i.test(`${label} ${attributes}`)) score += 6;
+    if (score >= 8 && (!best || score > best.score)) best = { domain, score };
+  }
+  if (best) return best.domain;
   for (const match of value.matchAll(/https?:\/\/[^\s<>'"]+/gi)) {
     const href = match[0].replace(/[),.;!?]+$/, '');
     const domain = normalizeCompanyDomain(href);
-    if (!domain) continue;
-    let score = 0;
-    try {
-      if (/\b(?:careers?|jobs?|openings?|opportunities|join|work-with-us)\b/i.test(new URL(href).pathname)) score += 8;
-    } catch { continue; }
-    const context = value.slice(Math.max(0, (match.index ?? 0) - 100), match.index ?? 0);
-    if (/company|website|homepage|visit|about|learn more|logo|home/i.test(context)) score += 10;
-    if (score && (!best || score > best.score)) best = { domain, score };
+    if (!domain || (!trustedPath(href) && !domainMatchesCompany(domain))) continue;
+    return domain;
   }
-  return best?.domain ?? '';
+  return '';
 }
 
 function companyNameFromDomain(domain: string): string {

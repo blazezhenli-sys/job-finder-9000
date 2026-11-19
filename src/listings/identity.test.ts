@@ -54,6 +54,15 @@ describe('company identity resolution', () => {
     expect(identity).toMatchObject({ name: 'Example Co', domain: 'example.com' });
   });
 
+  it('does not treat an unrelated editorial link as the employer domain', () => {
+    const identity = identityFromListings([{
+      providerJobId: '4', title: 'Engineer', description: '',
+      applicationUrl: 'https://job-boards.greenhouse.io/akido/jobs/4', originalUrl: 'https://job-boards.greenhouse.io/akido/jobs/4',
+      raw: { company_name: 'Akido', content: '&lt;a href=&quot;https://www.fastcompany.com/999999/example&quot;&gt;Fast Company&lt;/a&gt;' }
+    }]);
+    expect(identity.domain).toBeUndefined();
+  });
+
   it('does not treat relative career links as company domains', () => {
     const identity = identityFromAtsHtml('<a href="/about-us">About us</a><a href="/open-roles">Open roles</a>', 'greenhouse');
     expect(normalizeCompanyDomain('about-us')).toBe('');
