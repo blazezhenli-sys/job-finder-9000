@@ -26,8 +26,7 @@
     <button class="tab active" data-view="listings">Listings <span id="listing-count" class="tab-count">0</span></button>
     <button class="tab" data-view="market">Market</button>
     <button class="tab" data-view="companies">Companies</button>
-    <button class="tab" data-view="polling">Polling tasks</button>
-    <button class="tab" data-view="enrichment">Enrichment tasks</button>
+    <button class="tab" data-view="tasks">Tasks</button>
     <button class="tab" data-view="monitoring">Monitoring</button>
     <button class="tab" data-view="rules">Detection rules</button>
     <button class="tab" data-view="authors">Authors</button>
@@ -64,9 +63,7 @@
 
     <section id="view-company-profile" class="view"><div class="page-heading"><div><button id="back-to-companies" class="button secondary">← Companies</button><p class="eyebrow company-profile-eyebrow">COMPANY PROFILE</p><h1 id="company-profile-title">Company</h1><p id="company-profile-subtitle" class="subtle"></p></div></div><div id="company-profile"><div class="empty"><div class="spinner"></div><p>Loading company…</p></div></div></section>
 
-    <section id="view-polling" class="view"><div class="page-heading"><div><p class="eyebrow">LISTINGS WORKER</p><h1>Polling tasks</h1><p class="subtle">A bounded number of boards can run concurrently. Queued work stays here until it starts, and completed runs remain in history.</p></div><div class="heading-actions"><button id="refresh-poll-tasks-page" class="button secondary">Refresh</button></div></div><div id="poll-tasks" class="task-panel"><div class="empty"><p>Loading polling tasks…</p></div></div></section>
-
-    <section id="view-enrichment" class="view"><div class="page-heading"><div><p class="eyebrow">COMPANY ENRICHMENT WORKER</p><h1>Enrichment tasks</h1><p class="subtle">Company homepages are fetched on a separate bounded queue. Explicit social links are saved with their source and can be revisited periodically.</p></div><div class="heading-actions"><button id="refresh-enrichment-tasks-page" class="button secondary">Refresh</button></div></div><div id="enrichment-tasks" class="task-panel"><div class="empty"><p>Loading enrichment tasks…</p></div></div></section>
+    <section id="view-tasks" class="view"><div class="page-heading"><div><p class="eyebrow">BACKGROUND WORKERS</p><h1>Tasks</h1><p class="subtle">Monitor social polling, listing polling, and company enrichment in the shared worker container.</p></div><div class="heading-actions"><button id="refresh-tasks-page" class="button secondary">Refresh</button></div></div><div id="task-subtabs" class="task-subtabs" role="tablist" aria-label="Task types"><button class="task-subtab active" data-task-kind="social" role="tab" aria-selected="true">Social polling</button><button class="task-subtab" data-task-kind="listing" role="tab" aria-selected="false">Listing polling</button><button class="task-subtab" data-task-kind="enrichment" role="tab" aria-selected="false">Company enrichment</button></div><div id="task-panel" class="task-panel"><div class="empty"><p>Loading tasks…</p></div></div></section>
 
     <section id="view-monitoring" class="view"><div class="page-heading"><div><p class="eyebrow">SYSTEM STATUS</p><h1>Monitoring</h1><p class="subtle">Know whether the discovery loop is healthy.</p></div></div><div id="monitoring" class="monitor-grid"></div></section>
 
