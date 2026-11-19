@@ -44,6 +44,10 @@ async function boardRows(): Promise<JobBoard[]> {
 function identityNeedsRefresh(board: JobBoard): boolean {
   if (board.provider === 'remotive' || board.provider === 'adzuna') return false;
   if (board.identityDomain && normalizeCompanyDomain(board.identityDomain)) return false;
+  // A stored vendor/ATS host is not a usable company identity. Re-resolve it
+  // immediately instead of waiting for the normal seven-day refresh window.
+  if (board.identityDomain && !normalizeCompanyDomain(board.identityDomain)) return true;
+  if (board.companyWebsite && !normalizeCompanyDomain(board.companyWebsite)) return true;
   if (!board.identityLastObservedAt) return true;
   return new Date(board.identityLastObservedAt).getTime() < Date.now() - 7 * 86_400_000;
 }
