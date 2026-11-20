@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { Buffer } from 'node:buffer';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { config } from './config.js';
@@ -13,13 +14,28 @@ import { getMarketDashboard, getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 import { normalizeCompanyDomain } from './listings/identity.js';
 import { getCompanySocialSignals } from './company-signals.js';
+import { normalizeRedlistenWebhook, verifyRedlistenSignature } from './redlisten-webhook.js';
 
 const app = Fastify({ logger: true });
 const publicDir = path.join(process.cwd(), 'public');
 
+type RawBodyRequest = FastifyRequest & { rawBody?: Buffer };
+app.removeContentTypeParser('application/json');
+app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
+  const rawBody = Buffer.from(body as Buffer);
+  try {
+    const parsed = JSON.parse(rawBody.toString('utf8'));
+    if (request.url.split('?')[0] === '/api/webhooks/redlisten') (request as RawBodyRequest).rawBody = rawBody;
+    done(null, parsed);
+  } catch (error) {
+    done(error as Error);
+  }
+});
+
 function unauthorized(reply: FastifyReply) { return reply.code(401).header('WWW-Authenticate', 'Basic realm="Hiring Signals"').send({ error: 'Authentication required' }); }
 async function auth(request: FastifyRequest, reply: FastifyReply) {
-  if (request.url === '/api/health') return;
+  const requestPath = request.url.split('?')[0];
+  if (requestPath === '/api/health' || requestPath === '/api/webhooks/redlisten') return;
   const header = request.headers.authorization ?? '';
   if (!header.startsWith('Basic ')) return unauthorized(reply);
   const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
@@ -93,6 +109,20 @@ app.get('/api/market/drilldown', async (request, reply) => {
 app.get('/api/company-signals', async (request) => {
   const query = request.query as { limit?: string; offset?: string };
   return getCompanySocialSignals(query);
+});
+
+app.post('/api/webhooks/redlisten', async (request, reply) => {
+  if (!config.redlistenWebhookSecret) return reply.code(503).send({ error: 'Redlisten webhook is not configured' });
+  const rawBody = (request as RawBodyRequest).rawBody;
+  const signature = request.headers['x-redlisten-signature'];
+  const signatureValue = Array.isArray(signature) ? signature[0] : signature;
+  if (!rawBody || !verifyRedlistenSignature(rawBody, signatureValue, config.redlistenWebhookSecret)) {
+    return reply.code(401).send({ error: 'Invalid Redlisten webhook signature' });
+  }
+  const normalized = normalizeRedlistenWebhook(request.body);
+  if (!normalized) return reply.code(400).send({ error: 'Invalid Redlisten webhook payload' });
+  void processPost(normalized.post, normalized.cursor).catch((error) => console.error('Redlisten webhook processing failed', error));
+  return reply.code(202).send({ accepted: true, source: 'reddit', sourceId: normalized.post.sourceId });
 });
 
 app.get('/api/market/employers', async (request) => {
