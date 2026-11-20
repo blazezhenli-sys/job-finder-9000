@@ -152,6 +152,7 @@ export function rsshubFeedUrl(platform: 'linkedin' | 'facebook', profileUrl: str
   const parsed = new URL(profileUrl);
   const segments = parsed.pathname.split('/').filter(Boolean).map(routePart);
   let id = '';
+  const facebookProfileSuffixes = new Set(['about', 'events', 'followers', 'following', 'mentions', 'photos', 'posts', 'reels', 'reviews', 'videos']);
   if (platform === 'linkedin') {
     const hasPostsSuffix = segments.length === 3 && segments[2].toLowerCase() === 'posts';
     if (segments[0]?.toLowerCase() !== 'company' || !segments[1] || (segments.length !== 2 && !hasPostsSuffix)) throw new Error(`Unsupported LinkedIn company profile URL: ${profileUrl}`);
@@ -160,8 +161,12 @@ export function rsshubFeedUrl(platform: 'linkedin' | 'facebook', profileUrl: str
     id = segments.at(-1) || '';
   } else if (segments[0]?.toLowerCase() === 'page' && segments[1] && segments.length === 2) {
     id = segments[1];
+  } else if (segments[0]?.toLowerCase() === 'people' && segments.length === 3 && /^\d+$/.test(segments[2])) {
+    id = segments[2];
   } else if (segments[0]?.toLowerCase() === 'profile.php') {
     id = parsed.searchParams.get('id') || '';
+  } else if (segments.length === 2 && facebookProfileSuffixes.has(segments[1].toLowerCase())) {
+    id = segments[0];
   } else if (segments.length === 1 && !['home', 'watch', 'marketplace', 'groups', 'events', 'login', 'share', 'reel', 'stories'].includes(segments[0].toLowerCase())) {
     id = segments[0];
   }

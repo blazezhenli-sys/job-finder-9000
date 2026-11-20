@@ -42,8 +42,11 @@ describe('social source adapters', () => {
     expect(rsshubFeedUrl('linkedin', 'https://linkedin.com/company/vitallyaus/posts')).toBe('http://rsshub:1200/linkedin/company/vitallyaus/posts');
     expect(rsshubFeedUrl('facebook', 'https://www.facebook.com/example')).toBe('http://rsshub:1200/facebook/page/example');
     expect(rsshubFeedUrl('facebook', 'https://www.facebook.com/pages/Example/12345')).toBe('http://rsshub:1200/facebook/page/12345');
+    expect(rsshubFeedUrl('facebook', 'https://www.facebook.com/people/Example/12345')).toBe('http://rsshub:1200/facebook/page/12345');
     expect(rsshubFeedUrl('facebook', 'https://www.facebook.com/profile.php?id=12345')).toBe('http://rsshub:1200/facebook/page/12345');
+    expect(rsshubFeedUrl('facebook', 'https://www.facebook.com/v.vital.ly/reviews')).toBe('http://rsshub:1200/facebook/page/v.vital.ly');
     expect(() => rsshubFeedUrl('linkedin', 'https://www.linkedin.com/in/example')).toThrow();
+    expect(() => rsshubFeedUrl('facebook', 'https://www.facebook.com/profile.php')).toThrow();
   });
 
   it('parses RSS and Atom items, strips markup, filters old/reshared items, and deduplicates IDs', () => {
