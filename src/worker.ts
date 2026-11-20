@@ -10,6 +10,7 @@ import { backfillListingClassification, loadTechnologyTaxonomy } from './listing
 import { detectMarketSignals, runDailyMarketSnapshot } from './listings/analytics.js';
 import { startCompanyEnrichment } from './listings/enrichment-worker.js';
 import { startCompanySocialPolling, startCompanySocialRsshubPolling } from './company-social.js';
+import { scoreUnanalyzedCompanySocialPosts } from './company-social-analysis.js';
 
 let started = false;
 let listingTimer: NodeJS.Timeout | undefined;
@@ -37,6 +38,7 @@ export async function startWorkers() {
   if (config.enableListings) companyEnrichmentTimer = startCompanyEnrichment(config.companyEnrichmentIntervalMs);
   if (config.enableCompanySocialActivity) companySocialTimer = startCompanySocialPolling(config.companySocialPollIntervalMs);
   if (config.enableCompanySocialActivity) companySocialRsshubTimer = startCompanySocialRsshubPolling(config.companySocialRsshubSchedulerIntervalMs);
+  if (config.enableCompanySocialActivity) void scoreUnanalyzedCompanySocialPosts().catch((error) => console.error('company social analysis backfill failed', error));
   if (config.enableListings && config.enableListingDiscovery) discoveryTimer = await startListingDiscovery(config.listingDiscoveryIntervalMs);
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));

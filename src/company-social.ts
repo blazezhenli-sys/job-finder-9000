@@ -1,7 +1,9 @@
 import { instanceBase, stripHtml } from './sources/mastodon.js';
 import { config } from './config.js';
-import { pool } from './db.js';
+import { getPreferences, getRules, pool } from './db.js';
+import { scoreCompanySocialPost } from './company-social-analysis.js';
 import { events } from './pipeline-service.js';
+import type { DetectionRule, Preferences } from './types.js';
 
 export type CompanySocialPlatform = 'bluesky' | 'mastodon' | 'youtube' | 'linkedin' | 'facebook' | 'x';
 type SocialLink = { id: string; employer_id: string; employer_name: string; platform: CompanySocialPlatform; profile_url: string };
@@ -354,11 +356,19 @@ async function processTask(task: { taskId: string; link: SocialLink }) {
   try {
     const posts = await fetchAccount(task.link, cutoff);
     let newPosts = 0;
+    let scoringConfig: Promise<[DetectionRule[], Preferences]> | undefined;
     for (const post of posts) {
       const inserted = await pool.query(`INSERT INTO company_social_posts
         (employer_id, social_link_id, platform, source_id, author_id, author_name, author_handle, author_url, source_url, text, published_at, raw)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (social_link_id, source_id) DO NOTHING`, [task.link.employer_id, task.link.id, task.link.platform, post.sourceId, post.authorId, post.authorName, post.authorHandle, post.authorUrl, post.sourceUrl, post.text, post.publishedAt, JSON.stringify(post.raw ?? {})]);
-      newPosts += inserted.rowCount ?? 0;
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (social_link_id, source_id) DO NOTHING RETURNING id`, [task.link.employer_id, task.link.id, task.link.platform, post.sourceId, post.authorId, post.authorName, post.authorHandle, post.authorUrl, post.sourceUrl, post.text, post.publishedAt, JSON.stringify(post.raw ?? {})]);
+      if (!inserted.rows[0]) continue;
+      newPosts++;
+      scoringConfig ??= Promise.all([getRules(), getPreferences()]);
+      const [rules, preferences] = await scoringConfig;
+      const result = scoreCompanySocialPost(post.text, rules, preferences);
+      await pool.query(`UPDATE company_social_posts
+        SET analysis=$2, analyzed_at=now(), signal_category=$3, signal_quality=$4, signal_qualifies=$5
+        WHERE id=$1 AND analysis IS NULL`, [inserted.rows[0].id, JSON.stringify(result.analysis), result.signalCategory, result.signalQuality, result.qualifies]);
     }
     await finishTask(task.taskId, task.link, { status: 'completed', postsSeen: posts.length, newPosts });
   } catch (error) {
