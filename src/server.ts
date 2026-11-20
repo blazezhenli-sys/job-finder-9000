@@ -14,6 +14,7 @@ import { getMarketDashboard, getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 import { normalizeCompanyDomain } from './listings/identity.js';
 import { getCompanySocialSignals } from './company-signals.js';
+import { blueskyDisplayCategories } from './post-discovery-policy.js';
 import { normalizeRedlistenWebhook, verifyRedlistenSignature } from './redlisten-webhook.js';
 
 const app = Fastify({ logger: true });
@@ -121,7 +122,7 @@ app.post('/api/webhooks/redlisten', async (request, reply) => {
   }
   const normalized = normalizeRedlistenWebhook(request.body);
   if (!normalized) return reply.code(400).send({ error: 'Invalid Redlisten webhook payload' });
-  void processPost(normalized.post, normalized.cursor).catch((error) => console.error('Redlisten webhook processing failed', error));
+  void processPost(normalized.post, normalized.cursor, false, { notify: false }).catch((error) => console.error('Redlisten webhook processing failed', error));
   return reply.code(202).send({ accepted: true, source: 'reddit', sourceId: normalized.post.sourceId });
 });
 
@@ -213,10 +214,13 @@ app.get('/api/market/compare', async (request, reply) => {
 });
 
 app.get('/api/opportunities', async (request) => {
-  const query = request.query as { source?: string; status?: string; sort?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
+  const query = request.query as { source?: string; status?: string; sort?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; includeBlueskyAggregators?: string; limit?: string; offset?: string };
   const conditions: string[] = [];
   const values: unknown[] = [];
   if (query.source && ['bluesky', 'hacker_news', 'mastodon', 'reddit'].includes(query.source)) { values.push(query.source); conditions.push(`source = $${values.length}`); }
+  const blueskyCategories = blueskyDisplayCategories(query.includeBlueskyAggregators === 'true');
+  values.push(blueskyCategories);
+  conditions.push(`(source <> 'bluesky' OR signal_category = ANY($${values.length}::text[]))`);
   if (query.status && ['unread', 'interesting', 'dismissed', 'contacted'].includes(query.status)) { values.push(query.status); conditions.push(`status = $${values.length}`); }
   if (query.minQuality && Number.isFinite(Number(query.minQuality))) { values.push(Number(query.minQuality)); conditions.push(`signal_quality >= $${values.length}`); }
   if (query.signalCategory && ['direct_hiring', 'service_request', 'employee_referral', 'firsthand_announcement', 'aggregated_listing', 'uncertain'].includes(query.signalCategory)) { values.push(query.signalCategory); conditions.push(`signal_category = $${values.length}`); }
@@ -708,7 +712,7 @@ app.post('/api/dev/sample', async (_request, reply) => {
     { source: 'bluesky', sourceId: `sample-${Date.now()}-1`, authorName: 'Maya Chen', authorHandle: '@maya.example', authorUrl: 'https://bsky.app/profile/maya.example', sourceUrl: 'https://bsky.app/profile/maya.example/post/sample', text: "We're hiring a remote backend TypeScript contractor to help with our infrastructure. DM me if interested!", publishedAt: now, raw: { sample: true } },
     { source: 'hacker_news', sourceId: `sample-${Date.now()}-2`, authorName: 'founder', authorHandle: 'founder', authorUrl: 'https://news.ycombinator.com/user?id=founder', sourceUrl: 'https://news.ycombinator.com/item?id=sample', text: 'Our startup is looking for its first engineering hire. Worldwide remote, Node.js and PostgreSQL.', publishedAt: now, raw: { sample: true } }
   ];
-  for (const sample of samples) await processPost(sample);
+  for (const sample of samples) await processPost(sample, undefined, false, { notify: false });
   return { ok: true, count: samples.length };
 });
 

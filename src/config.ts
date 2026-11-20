@@ -33,7 +33,7 @@ export const config = {
   runMigrations: bool(process.env.RUN_MIGRATIONS, true),
   dashboardUsername: process.env.DASHBOARD_USERNAME ?? 'admin',
   dashboardPassword: process.env.DASHBOARD_PASSWORD ?? 'change-me',
-  enablePosts: bool(process.env.ENABLE_POSTS, false),
+  enablePosts: bool(process.env.ENABLE_POSTS, true),
   enableBluesky: bool(process.env.ENABLE_BLUESKY, true),
   jetstreamUrl: process.env.BLUESKY_JETSTREAM_URL ?? 'wss://jetstream1.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post',
   enableHackerNews: bool(process.env.ENABLE_HACKER_NEWS, true),

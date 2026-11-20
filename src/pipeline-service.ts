@@ -64,7 +64,8 @@ async function flushHealth() {
   ])));
 }
 
-export async function processPost(post: NormalizedPost, cursor?: string, recovered = false) {
+export async function processPost(post: NormalizedPost, cursor?: string, recovered = false, options: { notify?: boolean } = {}) {
+  const notify = options.notify !== false;
   const { rules, preferences, registry } = await pipelineConfig();
   let author: Awaited<ReturnType<typeof existingAuthor>>;
   let analysis = analyzePost(post, rules, preferences, undefined, registry);
@@ -93,12 +94,12 @@ export async function processPost(post: NormalizedPost, cursor?: string, recover
     ]);
     if (!inserted.rows[0]) return;
     opportunityId = inserted.rows[0].id as string;
-    if (notificationEligible(analysis, recovered, preferences)) {
+    if (notify && notificationEligible(analysis, recovered, preferences)) {
       await client.query(`INSERT INTO notifications (opportunity_id) VALUES ($1) ON CONFLICT (opportunity_id) DO NOTHING`, [opportunityId]);
     }
   });
 
-  queueStats(post.source, { matched: Boolean(opportunityId), threshold: Boolean(opportunityId) && notificationEligible(analysis, recovered, preferences), cursor });
+  queueStats(post.source, { matched: Boolean(opportunityId), threshold: notify && Boolean(opportunityId) && notificationEligible(analysis, recovered, preferences), cursor });
 
   if (opportunityId) {
     const result = await pool.query('SELECT * FROM opportunities WHERE id = $1', [opportunityId]);
