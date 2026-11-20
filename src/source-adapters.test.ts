@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { instanceBase, stripHtml } from './sources/mastodon.js';
 import { redditPostUrl } from './sources/reddit.js';
-import { blueskyActor, parseBlueskyFeed, parseMastodonStatuses, parseRsshubFeed, rsshubFeedUrl } from './company-social.js';
+import { blueskyActor, isRsshubEmptyFeed, parseBlueskyFeed, parseMastodonStatuses, parseRsshubFeed, rsshubFeedUrl } from './company-social.js';
 
 describe('social source adapters', () => {
   it('normalizes Mastodon instances and strips status HTML', () => {
@@ -64,5 +64,10 @@ describe('social source adapters', () => {
     expect(posts[0]).toMatchObject({ sourceId: 'post-1', sourceUrl: 'https://www.linkedin.com/posts/example-1', text: "We're hiring & growing." });
     expect(atomPosts).toHaveLength(1);
     expect(atomPosts[0]).toMatchObject({ sourceId: 'atom-1', sourceUrl: 'https://www.facebook.com/example/posts/1', text: 'New office.' });
+  });
+
+  it('recognizes RSSHub empty-route responses as empty feeds', () => {
+    expect(isRsshubEmptyFeed('Error: this route is empty, please check the original site')).toBe(true);
+    expect(isRsshubEmptyFeed('RSSHub returned HTTP 503: browser timeout')).toBe(false);
   });
 });

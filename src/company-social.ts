@@ -39,6 +39,10 @@ function looksRateLimited(platform: 'linkedin' | 'facebook', status: number, bod
   return status === 403 && /rate[ -]?limit|too many requests|temporarily blocked|throttl|checkpoint|blocked/i.test(body);
 }
 
+export function isRsshubEmptyFeed(body: string): boolean {
+  return /this route is empty, please check the original site/i.test(body);
+}
+
 async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<unknown> {
   const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
   if (!response.ok) throw new Error(`Social API returned HTTP ${response.status}`);
@@ -223,6 +227,7 @@ async function fetchRsshub(link: SocialLink & { platform: 'linkedin' | 'facebook
   const body = await response.text();
   if (!response.ok) {
     const detail = body.replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (isRsshubEmptyFeed(body)) return [];
     if (looksRateLimited(link.platform, response.status, body)) {
       const retryAfterMs = Math.max(config.companySocialRsshubPollIntervalMs, config.companySocialRsshubRateLimitCooldownMs, retryAfterMilliseconds(response.headers.get('retry-after')));
       throw new RsshubRateLimitError(`RSSHub rate limited HTTP ${response.status}${detail ? `: ${detail}` : ''}`, retryAfterMs);
