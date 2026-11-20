@@ -24,7 +24,7 @@
   </div>
   <nav class="tabs" aria-label="Sections" role="tablist">
     <button class="tab active" data-view="listings" role="tab" aria-controls="view-listings" aria-selected="true">Listings <span id="listing-count" class="tab-count">0</span></button>
-    <button class="tab" data-view="feed" role="tab" aria-controls="view-feed" aria-selected="false">Signals <span id="feed-count" class="tab-count">0</span></button>
+    <button class="tab" data-view="feed" role="tab" aria-controls="view-feed" aria-selected="false">Company signals <span id="feed-count" class="tab-count">0</span></button>
     <button class="tab" data-view="market" role="tab" aria-controls="view-market" aria-selected="false">Market</button>
     <button class="tab" data-view="companies" role="tab" aria-controls="view-companies" aria-selected="false">Companies</button>
     <button class="tab" data-view="tasks" role="tab" aria-controls="view-tasks" aria-selected="false">Tasks</button>
@@ -46,10 +46,10 @@
     </section>
 
     <section id="view-feed" class="view">
-      <div class="page-heading"><div><p class="eyebrow">REAL-TIME DISCOVERY</p><h1>Hiring signals</h1><p class="subtle">Fresh intent from public conversations, scored transparently.</p></div><div class="heading-actions"><button id="sample-btn" class="button secondary hidden">Load sample posts</button><button id="refresh-btn" class="button secondary">Refresh</button></div></div>
-      <div class="stats" id="stats"><div class="stat"><span>Visible signals</span><strong>—</strong></div><div class="stat"><span>High quality</span><strong>—</strong></div><div class="stat"><span>Unread</span><strong>—</strong></div><div class="stat"><span>Last discovery</span><strong>—</strong></div></div>
-      <div class="toolbar"><div class="filters"><select id="sort"><option value="discovered">Newest discovered</option><option value="published">Newest published</option><option value="quality">Highest signal quality</option></select><select id="source-filter"><option value="">All sources</option><option value="bluesky">Bluesky</option><option value="hacker_news">Hacker News</option><option value="mastodon">Mastodon</option><option value="reddit">Reddit</option></select><select id="category-filter"><option value="">All categories</option><option value="direct_hiring">Direct hiring</option><option value="service_request">Service request</option><option value="employee_referral">Employee referral</option><option value="firsthand_announcement">Firsthand announcement</option><option value="uncertain">Uncertain</option><option value="aggregated_listing">Aggregated listings</option></select><select id="status-filter"><option value="">All statuses</option><option value="unread">Unread</option><option value="interesting">Interesting</option><option value="contacted">Contacted</option><option value="dismissed">Dismissed</option></select><label class="score-filter">Min quality <input id="min-quality" type="number" min="0" max="100" value="0"></label><button id="apply-feed-filter" class="button secondary" type="button">Apply</button></div><span id="updated-label" class="subtle">—</span></div>
-      <div id="feed" class="feed"><div class="empty"><div class="spinner"></div><p>Loading signals…</p></div></div>
+      <div class="page-heading"><div><p class="eyebrow">COMPANY SOCIAL INTELLIGENCE</p><h1>Company signals</h1><p class="subtle">Recent hiring intent detected on known company social accounts, grouped by company.</p></div><div class="heading-actions"><button id="refresh-company-signals" class="button secondary" type="button">Refresh</button></div></div>
+      <div class="stats" id="company-signal-stats"><div class="stat"><span>Company signals</span><strong>—</strong></div><div class="stat"><span>Companies</span><strong>—</strong></div><div class="stat"><span>Latest activity</span><strong>—</strong></div><div class="stat"><span>Window</span><strong>14 days</strong></div></div>
+      <div class="toolbar"><span id="company-signals-updated" class="subtle">Loading recent company social activity…</span></div>
+      <div id="company-signals" class="feed"><div class="empty"><div class="spinner"></div><p>Loading company signals…</p></div></div><div id="company-signal-pagination" class="pagination"></div>
     </section>
 
     <section id="view-listings" class="view active">

@@ -148,7 +148,7 @@ function registryMatch(text: string, post: NormalizedPost, registry: Array<{ mat
   }).map((entry) => entry.label);
 }
 
-function classifySignal(text: string, post: NormalizedPost, author: AuthorSignals, registry: Array<{ match_type: string; pattern: string; label: string }>, methods: ContactMethod[], matchedRules: DetectionRule[], preferences: Preferences): { category: SignalCategory; quality: number; breakdown: ScoreContribution[]; reasons: string[]; suppressed: boolean } {
+function classifySignal(text: string, post: NormalizedPost, author: AuthorSignals, registry: Array<{ match_type: string; pattern: string; label: string }>, methods: ContactMethod[], matchedRules: DetectionRule[], preferences: Preferences, options: { trustKnownCompanyAccount?: boolean } = {}): { category: SignalCategory; quality: number; breakdown: ScoreContribution[]; reasons: string[]; suppressed: boolean } {
   const evidence = registryMatch(text, post, registry);
   const heuristics = heuristicConfig(preferences);
   const activeDemand = matchesAny(text, heuristics.activeDemandTerms);
@@ -164,7 +164,8 @@ function classifySignal(text: string, post: NormalizedPost, author: AuthorSignal
   let category: SignalCategory = 'uncertain';
   let suppressed = false;
   const reasons: string[] = [];
-  if (author.classification === 'aggregator' || (author.isKnownAggregator && author.classification !== 'legitimate_employer') || evidence.length || automatedTemplate) { category = 'aggregated_listing'; suppressed = true; reasons.push(evidence.length ? `Known aggregator evidence: ${evidence.join(', ')}` : 'Templated or syndicated job advertisement pattern'); }
+  const syndicated = author.classification === 'aggregator' || (author.isKnownAggregator && author.classification !== 'legitimate_employer') || evidence.length || automatedTemplate;
+  if (syndicated && !options.trustKnownCompanyAccount) { category = 'aggregated_listing'; suppressed = true; reasons.push(evidence.length ? `Known aggregator evidence: ${evidence.join(', ')}` : 'Templated or syndicated job advertisement pattern'); }
   else if (service) { category = 'service_request'; reasons.push('Post describes a concrete request for help or services'); }
   else if (referral) { category = 'employee_referral'; reasons.push('Author presents a team/company hiring opportunity and invites contact'); }
   else if (direct) { category = 'direct_hiring'; reasons.push('Author expresses active personal hiring intent'); }
@@ -186,7 +187,7 @@ function classifySignal(text: string, post: NormalizedPost, author: AuthorSignal
   return { category, quality: score, breakdown: quality, reasons, suppressed };
 }
 
-export function analyzePost(post: NormalizedPost, rules: DetectionRule[], preferences: Preferences, author: AuthorSignals = {}, registry: Array<{ match_type: string; pattern: string; label: string }> = []): Analysis {
+export function analyzePost(post: NormalizedPost, rules: DetectionRule[], preferences: Preferences, author: AuthorSignals = {}, registry: Array<{ match_type: string; pattern: string; label: string }> = [], options: { trustKnownCompanyAccount?: boolean } = {}): Analysis {
   const text = normalizeText(post.text);
   const matches = rules.filter((rule) => rule.enabled && ruleMatches(text, rule));
   const matchedRules = matches.map((rule) => ({ id: rule.id, name: rule.name, pattern: rule.pattern, category: rule.category, negative: rule.negative }));
@@ -194,9 +195,13 @@ export function analyzePost(post: NormalizedPost, rules: DetectionRule[], prefer
   const methods = contactMethods(text);
   const extractedLocations = extractLocationSignals(text);
   const relevance = scorePreferenceEvidence(text, preferences);
-  const quality = classifySignal(text, post, author, registry, methods, matches, preferences);
+  const quality = classifySignal(text, post, author, registry, methods, matches, preferences, options);
   const personalRelevance = blocked ? 0 : relevance.score;
   return { matchedRules, technologies: relevance.technologies, employmentTypes: relevance.employmentTypes, category: blocked ? 'uncertain' : quality.category, signalQuality: blocked ? 0 : quality.quality, signalQualityBreakdown: quality.breakdown, personalRelevance, personalRelevanceBreakdown: relevance.breakdown, contactMethods: methods, classificationReasons: quality.reasons, locationSignals: extractedLocations, locationFit: 'unknown', locationFitScore: 0, locationFitReasons: [], score: personalRelevance, breakdown: relevance.breakdown, suppressed: blocked || quality.suppressed, blocked };
+}
+
+export function analyzeCompanySocialPost(text: string, rules: DetectionRule[], preferences: Preferences): Analysis {
+  return analyzePost({ source: 'bluesky', sourceId: 'company-social', authorName: 'Known company account', authorHandle: 'known-company-account', authorUrl: '', sourceUrl: '', text, publishedAt: new Date() }, rules, preferences, {}, [], { trustKnownCompanyAccount: true });
 }
 
 export function notificationEligible(analysis: Analysis, recovered: boolean, preferences: Preferences): boolean {

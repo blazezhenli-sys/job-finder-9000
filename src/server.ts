@@ -12,6 +12,7 @@ import { jobCategoryLabels, LISTING_CLASSIFICATION_VERSION, loadTechnologyTaxono
 import { getMarketDashboard, getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 import { normalizeCompanyDomain } from './listings/identity.js';
+import { getCompanySocialSignals } from './company-signals.js';
 
 const app = Fastify({ logger: true });
 const publicDir = path.join(process.cwd(), 'public');
@@ -87,6 +88,11 @@ app.get('/api/market/drilldown', async (request, reply) => {
   const evidenceOffset = Math.max(0, Number(query.offset) || 0);
   const evidence = await pool.query('SELECT l.id, l.title, l.location, l.remote_mode, l.job_category, l.primary_specialty, l.application_url, l.original_url, l.first_observed_at, l.source_updated_at, b.provider, b.board_identifier, e.id AS employer_id, e.name AS employer_name FROM ' + from + ' WHERE ' + where + ' ORDER BY l.first_observed_at DESC NULLS LAST, l.source_updated_at DESC NULLS LAST LIMIT $' + (values.length + 1) + ' OFFSET $' + (values.length + 2), [...values, evidenceLimit, evidenceOffset]);
   return { dimension: query.dimension, value: query.value, companies: companies.rows, evidence: evidence.rows, total: total.rows[0].count, limit, offset, evidencePagination: { limit: evidenceLimit, offset: evidenceOffset } };
+});
+
+app.get('/api/company-signals', async (request) => {
+  const query = request.query as { limit?: string; offset?: string };
+  return getCompanySocialSignals(query);
 });
 
 app.get('/api/market/employers', async (request) => {
