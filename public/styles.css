@@ -55,4 +55,7 @@
 .site-header{position:sticky;top:0;z-index:3;background:var(--paper);border-bottom:1px solid var(--line);box-shadow:0 4px 18px #23443108}
 .site-header .topbar{position:static;border-bottom:0}
 .site-header .tabs{max-width:1180px;margin:0 auto;padding:0 24px}
+.filter-clear{white-space:nowrap}
+.listing-card:focus-visible,.company-card:focus-visible,.company-listing-card:focus-visible{outline:3px solid var(--green);outline-offset:3px}
+.tab:focus-visible,.button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.market-sector-key:focus-visible{outline:3px solid var(--green);outline-offset:2px}
 @media(max-width:760px){.site-header .tabs{padding:0 15px}}
