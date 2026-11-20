@@ -3,7 +3,7 @@ import { config } from './config.js';
 import { pool } from './db.js';
 import { events } from './pipeline-service.js';
 
-export type CompanySocialPlatform = 'bluesky' | 'mastodon' | 'youtube' | 'linkedin' | 'facebook';
+export type CompanySocialPlatform = 'bluesky' | 'mastodon' | 'youtube' | 'linkedin' | 'facebook' | 'x';
 type SocialLink = { id: string; employer_id: string; employer_name: string; platform: CompanySocialPlatform; profile_url: string };
 type CompanySocialPost = { sourceId: string; authorId: string; authorName: string; authorHandle: string; authorUrl: string; sourceUrl: string; text: string; publishedAt: Date; raw: unknown };
 type SocialPollResult = { status: 'completed' | 'failed'; postsSeen: number; newPosts: number; error?: string; retryAfterMs?: number };
@@ -12,8 +12,8 @@ function jsonObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function isRsshubPlatform(platform: CompanySocialPlatform): platform is 'linkedin' | 'facebook' {
-  return platform === 'linkedin' || platform === 'facebook';
+function isRsshubPlatform(platform: CompanySocialPlatform): platform is 'linkedin' | 'facebook' | 'x' {
+  return platform === 'linkedin' || platform === 'facebook' || platform === 'x';
 }
 
 class RsshubRateLimitError extends Error {
@@ -23,7 +23,7 @@ class RsshubRateLimitError extends Error {
   }
 }
 
-const rsshubCooldownUntil: Record<'linkedin' | 'facebook', number> = { linkedin: 0, facebook: 0 };
+const rsshubCooldownUntil: Record<'linkedin' | 'facebook' | 'x', number> = { linkedin: 0, facebook: 0, x: 0 };
 const youtubeChannelIdCache = new Map<string, string>();
 
 function retryAfterMilliseconds(value: string | null): number {
@@ -34,7 +34,7 @@ function retryAfterMilliseconds(value: string | null): number {
   return Number.isNaN(timestamp) ? 0 : Math.max(0, timestamp - Date.now());
 }
 
-function looksRateLimited(platform: 'linkedin' | 'facebook', status: number, body: string): boolean {
+function looksRateLimited(platform: 'linkedin' | 'facebook' | 'x', status: number, body: string): boolean {
   if (status === 429) return true;
   if (status === 503 && (platform === 'facebook' || /rate[ -]?limit|too many requests|temporarily blocked|throttl|checkpoint|blocked/i.test(body))) return true;
   return status === 403 && /rate[ -]?limit|too many requests|temporarily blocked|throttl|checkpoint|blocked/i.test(body);
@@ -217,12 +217,15 @@ async function fetchYoutube(link: SocialLink, cutoff: Date): Promise<CompanySoci
 
 function routePart(value: string): string { return decodeURIComponent(value).trim(); }
 
-export function rsshubFeedUrl(platform: 'linkedin' | 'facebook', profileUrl: string): string {
+export function rsshubFeedUrl(platform: 'linkedin' | 'facebook' | 'x', profileUrl: string): string {
   const parsed = new URL(profileUrl);
   const segments = parsed.pathname.split('/').filter(Boolean).map(routePart);
   let id = '';
   const facebookProfileSuffixes = new Set(['about', 'events', 'followers', 'following', 'mentions', 'photos', 'posts', 'reels', 'reviews', 'videos']);
-  if (platform === 'linkedin') {
+  if (platform === 'x') {
+    if (segments.length !== 1 || !segments[0] || ['compose', 'explore', 'hashtag', 'home', 'i', 'intent', 'login', 'messages', 'notifications', 'search', 'settings', 'share'].includes(segments[0].toLowerCase())) throw new Error(`Unsupported X profile URL: ${profileUrl}`);
+    id = segments[0];
+  } else if (platform === 'linkedin') {
     const hasPostsSuffix = segments.length === 3 && segments[2].toLowerCase() === 'posts';
     if (segments[0]?.toLowerCase() !== 'company' || !segments[1] || (segments.length !== 2 && !hasPostsSuffix)) throw new Error(`Unsupported LinkedIn company profile URL: ${profileUrl}`);
     id = segments[1];
@@ -240,7 +243,7 @@ export function rsshubFeedUrl(platform: 'linkedin' | 'facebook', profileUrl: str
     id = segments[0];
   }
   if (!id) throw new Error(`Unsupported ${platform} profile URL: ${profileUrl}`);
-  const route = platform === 'linkedin' ? `/linkedin/company/${encodeURIComponent(id)}/posts` : `/facebook/page/${encodeURIComponent(id)}`;
+  const route = platform === 'linkedin' ? `/linkedin/company/${encodeURIComponent(id)}/posts` : platform === 'x' ? `/twitter/user/${encodeURIComponent(id)}` : `/facebook/page/${encodeURIComponent(id)}`;
   return `${config.rsshubBaseUrl}${route}`;
 }
 
@@ -286,7 +289,7 @@ export function parseRsshubFeed(xml: string, cutoff: Date): CompanySocialPost[] 
   return posts;
 }
 
-async function fetchRsshub(link: SocialLink & { platform: 'linkedin' | 'facebook' }, cutoff: Date): Promise<CompanySocialPost[]> {
+async function fetchRsshub(link: SocialLink & { platform: 'linkedin' | 'facebook' | 'x' }, cutoff: Date): Promise<CompanySocialPost[]> {
   const feedUrl = rsshubFeedUrl(link.platform, link.profile_url);
   const response = await fetch(feedUrl, { headers: { Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml' }, signal: AbortSignal.timeout(config.companySocialRsshubTimeoutMs) });
   const body = await response.text();
@@ -306,7 +309,7 @@ async function fetchAccount(link: SocialLink, cutoff: Date): Promise<CompanySoci
   if (link.platform === 'bluesky') return fetchBluesky(link, cutoff);
   if (link.platform === 'mastodon') return fetchMastodon(link, cutoff);
   if (link.platform === 'youtube') return fetchYoutube(link, cutoff);
-  if (isRsshubPlatform(link.platform)) return fetchRsshub(link as SocialLink & { platform: 'linkedin' | 'facebook' }, cutoff);
+  if (isRsshubPlatform(link.platform)) return fetchRsshub(link as SocialLink & { platform: 'linkedin' | 'facebook' | 'x' }, cutoff);
   throw new Error(`Unsupported company social platform: ${link.platform}`);
 }
 
@@ -391,7 +394,7 @@ let rsshubRunning = false;
 export async function pollCompanySocialRsshub() {
   if (rsshubRunning) return;
   rsshubRunning = true;
-  try { await pollCompanySocialLane(['linkedin', 'facebook'], config.companySocialRsshubConcurrency); }
+  try { await pollCompanySocialLane(['linkedin', 'facebook', 'x'], config.companySocialRsshubConcurrency); }
   finally { rsshubRunning = false; }
 }
 
