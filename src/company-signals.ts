@@ -88,18 +88,49 @@ export function filterCompanySocialPosts(rows: CompanySocialPostInput[], now = n
   return rows.filter((row) => new Date(row.published_at).getTime() >= cutoff);
 }
 
-export async function getCompanySocialSignals(query: { limit?: string; offset?: string } = {}) {
+type CompanySocialSignalSnapshot = {
+  signals: CompanySocialSignal[];
+  retentionDays: number;
+};
+
+const signalCacheTtlMs = 5_000;
+let signalCache: { expiresAt: number; value: CompanySocialSignalSnapshot } | undefined;
+let signalSnapshotPromise: Promise<CompanySocialSignalSnapshot> | undefined;
+
+async function buildCompanySocialSignalSnapshot(): Promise<CompanySocialSignalSnapshot> {
   const [rules, preferences] = await Promise.all([getRules(), getPreferences()]);
+  const cutoff = new Date(Date.now() - config.companySocialRetentionDays * 86_400_000).toISOString();
   const result = await pool.query<CompanySocialPostInput>(`SELECT p.id, p.employer_id, e.name AS employer_name, e.website AS employer_website,
       p.platform, p.source_url, p.text, p.published_at
     FROM company_social_posts p
     JOIN employers e ON e.id = p.employer_id
     JOIN company_social_links l ON l.id = p.social_link_id AND l.is_active
-    WHERE p.published_at >= now() - ($1::text || ' days')::interval
-    ORDER BY p.published_at DESC, p.id DESC`, [config.companySocialRetentionDays]);
+    WHERE p.published_at >= $1::timestamptz`, [cutoff]);
 
-  const signals = coalesceCompanySocialPosts(filterCompanySocialPosts(result.rows), rules, preferences);
+  return {
+    signals: coalesceCompanySocialPosts(result.rows, rules, preferences),
+    retentionDays: config.companySocialRetentionDays
+  };
+}
+
+async function getCompanySocialSignalSnapshot(): Promise<CompanySocialSignalSnapshot> {
+  if (signalCache && signalCache.expiresAt > Date.now()) return signalCache.value;
+  if (!signalSnapshotPromise) {
+    signalSnapshotPromise = buildCompanySocialSignalSnapshot()
+      .then((value) => {
+        signalCache = { value, expiresAt: Date.now() + signalCacheTtlMs };
+        return value;
+      })
+      .finally(() => {
+        signalSnapshotPromise = undefined;
+      });
+  }
+  return signalSnapshotPromise;
+}
+
+export async function getCompanySocialSignals(query: { limit?: string; offset?: string } = {}) {
+  const snapshot = await getCompanySocialSignalSnapshot();
   const limit = Math.min(50, Math.max(1, Number(query.limit) || 25));
   const offset = Math.max(0, Number(query.offset) || 0);
-  return { signals: signals.slice(offset, offset + limit), total: signals.length, limit, offset, retentionDays: config.companySocialRetentionDays };
+  return { signals: snapshot.signals.slice(offset, offset + limit), total: snapshot.signals.length, limit, offset, retentionDays: snapshot.retentionDays };
 }
