@@ -229,7 +229,7 @@ async function fetchRsshub(link: SocialLink & { platform: 'linkedin' | 'facebook
     const detail = body.replace(/\s+/g, ' ').trim().slice(0, 240);
     if (isRsshubEmptyFeed(body)) return [];
     if (looksRateLimited(link.platform, response.status, body)) {
-      const retryAfterMs = Math.max(config.companySocialRsshubPollIntervalMs, config.companySocialRsshubRateLimitCooldownMs, retryAfterMilliseconds(response.headers.get('retry-after')));
+      const retryAfterMs = Math.max(config.companySocialRsshubRateLimitCooldownMs, retryAfterMilliseconds(response.headers.get('retry-after')));
       throw new RsshubRateLimitError(`RSSHub rate limited HTTP ${response.status}${detail ? `: ${detail}` : ''}`, retryAfterMs);
     }
     throw new Error(`RSSHub returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
@@ -277,7 +277,7 @@ async function processTask(task: { taskId: string; link: SocialLink }) {
   if (isRsshubPlatform(task.link.platform)) {
     const remainingCooldownMs = rsshubCooldownUntil[task.link.platform] - Date.now();
     if (remainingCooldownMs > 0) {
-      await finishTask(task.taskId, task.link, { status: 'failed', postsSeen: 0, newPosts: 0, retryAfterMs: Math.max(config.companySocialRsshubPollIntervalMs, remainingCooldownMs), error: `Deferred after RSSHub ${task.link.platform} rate limit; no request made` });
+      await finishTask(task.taskId, task.link, { status: 'failed', postsSeen: 0, newPosts: 0, retryAfterMs: Math.max(config.companySocialRsshubRateLimitCooldownMs, remainingCooldownMs), error: `Deferred after RSSHub ${task.link.platform} rate limit; no request made` });
       return;
     }
   }

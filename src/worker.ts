@@ -36,7 +36,7 @@ export async function startWorkers() {
   if (config.enableListings) listingTimer = startListingPolling(config.listingsPollIntervalMs);
   if (config.enableListings) companyEnrichmentTimer = startCompanyEnrichment(config.companyEnrichmentIntervalMs);
   if (config.enableCompanySocialActivity) companySocialTimer = startCompanySocialPolling(config.companySocialPollIntervalMs);
-  if (config.enableCompanySocialActivity) companySocialRsshubTimer = startCompanySocialRsshubPolling(config.companySocialRsshubPollIntervalMs);
+  if (config.enableCompanySocialActivity) companySocialRsshubTimer = startCompanySocialRsshubPolling(config.companySocialRsshubSchedulerIntervalMs);
   if (config.enableListings && config.enableListingDiscovery) discoveryTimer = await startListingDiscovery(config.listingDiscoveryIntervalMs);
   if (config.enableListings) void backfillListingMetadata().catch((error) => console.error('company metadata backfill failed', error));
   if (config.enableListings) void backfillListingCompensation().catch((error) => console.error('salary backfill failed', error));
