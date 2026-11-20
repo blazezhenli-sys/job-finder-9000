@@ -278,7 +278,7 @@ renderCompanyProfile = function(data) {
   const socialLinks = data.socialLinks || [];
   const profileGrid = document.querySelector('#company-profile .company-profile-grid');
   profileGrid?.classList.add('company-details-grid');
-  const platformLabel = { bluesky: 'Bluesky', mastodon: 'Mastodon', linkedin: 'LinkedIn', facebook: 'Facebook' };
+  const platformLabel = { bluesky: 'Bluesky', mastodon: 'Mastodon', youtube: 'YouTube', linkedin: 'LinkedIn', facebook: 'Facebook' };
   const socialActivity = data.socialActivity || [];
   const socialTimeline = socialActivity.length ? socialActivity.map((post) => `<article class="company-social-post"><div class="company-social-post-top"><span class="source-label"><b>${esc(platformLabel[post.platform] || post.platform)}</b> · ${esc(post.author_name || post.author_handle || 'Company account')}</span><span class="subtle">${relative(post.published_at)}</span></div><p>${esc(post.text)}</p><div class="opp-meta"><span>${esc(post.author_handle || '')}</span><a class="source-link" href="${esc(post.source_url)}" target="_blank" rel="noreferrer">View original ↗</a></div></article>`).join('') : '<p class="subtle">No recent original public posts have been collected yet.</p>';
   if (profileGrid) {

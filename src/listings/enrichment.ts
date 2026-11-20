@@ -89,6 +89,12 @@ function canonicalSocialPath(parsed: URL, platform: SocialPlatform): string {
     return '';
   }
   if (platform === 'bluesky' && first === 'profile' && segments[1]) return `/profile/${segments[1]}`;
+  if (platform === 'youtube') {
+    if (first === 'channel' && segments[1]) return `/channel/${segments[1]}`;
+    if (segments[0].startsWith('@')) return `/${segments[0]}`;
+    if (['c', 'user'].includes(first) && segments[1]) return `/${first}/${segments[1]}`;
+    return '';
+  }
   if (platform === 'mastodon' && segments[0].startsWith('@')) return `/${segments[0]}`;
   return parsed.pathname.replace(/\/+$/, '') || '/';
 }

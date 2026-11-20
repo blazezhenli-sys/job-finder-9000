@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { instanceBase, stripHtml } from './sources/mastodon.js';
 import { redditPostUrl } from './sources/reddit.js';
-import { blueskyActor, isRsshubEmptyFeed, parseBlueskyFeed, parseMastodonStatuses, parseRsshubFeed, rsshubFeedUrl } from './company-social.js';
+import { blueskyActor, isRsshubEmptyFeed, parseBlueskyFeed, parseMastodonStatuses, parseRsshubFeed, parseYoutubeFeed, rsshubFeedUrl, youtubeChannelId } from './company-social.js';
 
 describe('social source adapters', () => {
   it('normalizes Mastodon instances and strips status HTML', () => {
@@ -69,5 +69,14 @@ describe('social source adapters', () => {
   it('recognizes RSSHub empty-route responses as empty feeds', () => {
     expect(isRsshubEmptyFeed('Error: this route is empty, please check the original site')).toBe(true);
     expect(isRsshubEmptyFeed('RSSHub returned HTTP 503: browser timeout')).toBe(false);
+  });
+
+  it('parses native YouTube Atom feeds and resolves channel URLs', () => {
+    expect(youtubeChannelId('https://www.youtube.com/channel/UC123')).toBe('UC123');
+    const posts = parseYoutubeFeed(`<feed>
+      <entry><yt:videoId>video-1</yt:videoId><yt:channelId>UC123</yt:channelId><title>Hiring update</title><link rel="alternate" href="https://www.youtube.com/watch?v=video-1"/><author><name>Example</name></author><published>2026-01-02T00:00:00Z</published><media:group><media:description><![CDATA[<p>We are hiring.</p>]]></media:description></media:group></entry>
+    </feed>`, new Date('2026-01-01T00:00:00Z'));
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ sourceId: 'video-1', sourceUrl: 'https://www.youtube.com/watch?v=video-1', text: 'We are hiring.', authorName: 'Example' });
   });
 });

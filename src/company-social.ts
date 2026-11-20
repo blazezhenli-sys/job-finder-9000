@@ -3,7 +3,7 @@ import { config } from './config.js';
 import { pool } from './db.js';
 import { events } from './pipeline-service.js';
 
-export type CompanySocialPlatform = 'bluesky' | 'mastodon' | 'linkedin' | 'facebook';
+export type CompanySocialPlatform = 'bluesky' | 'mastodon' | 'youtube' | 'linkedin' | 'facebook';
 type SocialLink = { id: string; employer_id: string; employer_name: string; platform: CompanySocialPlatform; profile_url: string };
 type CompanySocialPost = { sourceId: string; authorId: string; authorName: string; authorHandle: string; authorUrl: string; sourceUrl: string; text: string; publishedAt: Date; raw: unknown };
 type SocialPollResult = { status: 'completed' | 'failed'; postsSeen: number; newPosts: number; error?: string; retryAfterMs?: number };
@@ -24,6 +24,7 @@ class RsshubRateLimitError extends Error {
 }
 
 const rsshubCooldownUntil: Record<'linkedin' | 'facebook', number> = { linkedin: 0, facebook: 0 };
+const youtubeChannelIdCache = new Map<string, string>();
 
 function retryAfterMilliseconds(value: string | null): number {
   if (!value) return 0;
@@ -150,6 +151,70 @@ async function fetchMastodon(link: SocialLink, cutoff: Date): Promise<CompanySoc
   return posts.slice(0, config.companySocialBackfillLimit);
 }
 
+export function youtubeChannelId(profileUrl: string): string {
+  const parsed = new URL(profileUrl);
+  const segments = parsed.pathname.split('/').filter(Boolean).map(routePart);
+  const first = segments[0]?.toLowerCase() ?? '';
+  if (first === 'channel' && segments[1]?.startsWith('UC')) return segments[1];
+  throw new Error(`Unsupported YouTube channel URL: ${profileUrl}`);
+}
+
+function extractYoutubeChannelId(html: string): string {
+  const ids = new Set<string>();
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    if (/\bitemprop\s*=\s*["']channelId["']/i.test(tag)) {
+      const channelId = tag.match(/\bcontent\s*=\s*["'](UC[a-zA-Z0-9_-]+)["']/i)?.[1];
+      if (channelId) ids.add(channelId);
+    }
+  }
+  for (const match of html.matchAll(/(?:\\?"channelId\\?"\s*:\s*\\?")(UC[a-zA-Z0-9_-]+)/g)) ids.add(match[1]);
+  for (const match of html.matchAll(/\/channel\/(UC[a-zA-Z0-9_-]+)/g)) ids.add(match[1]);
+  if (ids.size !== 1) throw new Error('Could not resolve a unique YouTube channel ID');
+  return [...ids][0];
+}
+
+async function resolveYoutubeChannelId(profileUrl: string): Promise<string> {
+  const cached = youtubeChannelIdCache.get(profileUrl);
+  if (cached) return cached;
+  try {
+    const direct = youtubeChannelId(profileUrl);
+    youtubeChannelIdCache.set(profileUrl, direct);
+    return direct;
+  } catch {
+    const response = await fetch(profileUrl, { headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'hiring-signal-discovery-youtube/0.1' }, signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) throw new Error(`YouTube channel lookup returned HTTP ${response.status}`);
+    const channelId = extractYoutubeChannelId(await response.text());
+    youtubeChannelIdCache.set(profileUrl, channelId);
+    return channelId;
+  }
+}
+
+export function parseYoutubeFeed(xml: string, cutoff: Date): CompanySocialPost[] {
+  const posts: CompanySocialPost[] = [];
+  const seen = new Set<string>();
+  for (const block of feedBlocks(xml)) {
+    const channelId = xmlTagValue(block, 'yt:channelId');
+    const videoId = xmlTagValue(block, 'yt:videoId');
+    const sourceUrl = xmlLinkValue(block);
+    const sourceId = videoId || xmlTagValue(block, 'id') || sourceUrl;
+    const publishedAt = new Date(xmlTagValue(block, 'published') || xmlTagValue(block, 'updated'));
+    const text = stripHtml(xmlTagValue(block, 'media:description') || xmlTagValue(block, 'description') || xmlTagValue(block, 'content') || xmlTagValue(block, 'title'));
+    if (!sourceId || !sourceUrl || !/^https?:\/\//i.test(sourceUrl) || Number.isNaN(publishedAt.getTime()) || publishedAt < cutoff || !text || seen.has(sourceId)) continue;
+    seen.add(sourceId);
+    const author = xmlTagValue(block, 'name') || xmlTagValue(block, 'author') || 'YouTube channel';
+    posts.push({ sourceId, authorId: channelId || author, authorName: author, authorHandle: '', authorUrl: channelId ? `https://www.youtube.com/channel/${channelId}` : '', sourceUrl, text, publishedAt, raw: { xml: block } });
+  }
+  return posts;
+}
+
+async function fetchYoutube(link: SocialLink, cutoff: Date): Promise<CompanySocialPost[]> {
+  const channelId = await resolveYoutubeChannelId(link.profile_url);
+  const response = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`, { headers: { Accept: 'application/atom+xml, application/xml, text/xml', 'User-Agent': 'hiring-signal-discovery-youtube/0.1' }, signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) throw new Error(`YouTube feed returned HTTP ${response.status}`);
+  return parseYoutubeFeed(await response.text(), cutoff);
+}
+
 function routePart(value: string): string { return decodeURIComponent(value).trim(); }
 
 export function rsshubFeedUrl(platform: 'linkedin' | 'facebook', profileUrl: string): string {
@@ -240,6 +305,7 @@ async function fetchRsshub(link: SocialLink & { platform: 'linkedin' | 'facebook
 async function fetchAccount(link: SocialLink, cutoff: Date): Promise<CompanySocialPost[]> {
   if (link.platform === 'bluesky') return fetchBluesky(link, cutoff);
   if (link.platform === 'mastodon') return fetchMastodon(link, cutoff);
+  if (link.platform === 'youtube') return fetchYoutube(link, cutoff);
   if (isRsshubPlatform(link.platform)) return fetchRsshub(link as SocialLink & { platform: 'linkedin' | 'facebook' }, cutoff);
   throw new Error(`Unsupported company social platform: ${link.platform}`);
 }
@@ -317,7 +383,7 @@ let running = false;
 export async function pollCompanySocial() {
   if (running) return;
   running = true;
-  try { await pollCompanySocialLane(['bluesky', 'mastodon'], config.companySocialConcurrency); }
+  try { await pollCompanySocialLane(['bluesky', 'mastodon', 'youtube'], config.companySocialConcurrency); }
   finally { running = false; }
 }
 

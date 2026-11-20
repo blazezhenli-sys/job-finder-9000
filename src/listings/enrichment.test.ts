@@ -45,4 +45,14 @@ describe('company social enrichment', () => {
       { platform: 'x', profileUrl: 'https://x.com/example', sourceUrl: 'https://example.com' }
     ]);
   });
+
+  it('canonicalizes YouTube channel URLs and ignores video routes', () => {
+    const links = extractSocialLinks(`<a href="https://youtube.com/@example/videos">Videos</a>
+      <a href="https://youtube.com/channel/UC123">Channel</a>
+      <a href="https://youtube.com/watch?v=video123">Video</a>`, 'https://example.com');
+    expect(links).toEqual([
+      { platform: 'youtube', profileUrl: 'https://youtube.com/@example', sourceUrl: 'https://example.com' },
+      { platform: 'youtube', profileUrl: 'https://youtube.com/channel/UC123', sourceUrl: 'https://example.com' }
+    ]);
+  });
 });
