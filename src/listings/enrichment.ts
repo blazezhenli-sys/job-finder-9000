@@ -20,6 +20,8 @@ const socialHosts: Array<[SocialPlatform, Set<string>]> = [
 
 const socialHostsByName = new Map(socialHosts.flatMap(([platform, hosts]) => [...hosts].map((host) => [host, platform] as const)));
 const instagramNonProfileRoutes = new Set(['accounts', 'about', 'ar', 'challenge', 'direct', 'developer', 'emails', 'explore', 'legal', 'oauth', 'p', 'privacy', 'reel', 'reels', 'session', 'stories', 'tv', 'web']);
+const xNonProfileRoutes = new Set(['compose', 'explore', 'hashtag', 'home', 'i', 'intent', 'login', 'messages', 'notifications', 'search', 'settings', 'share']);
+const facebookProfileSuffixes = new Set(['about', 'events', 'followers', 'following', 'mentions', 'photos', 'posts', 'reels', 'reviews', 'videos']);
 
 function text(value: unknown): string { return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''; }
 
@@ -68,15 +70,41 @@ function isSocialProfileUrl(value: string, platform: SocialPlatform): boolean {
   } catch { return false; }
 }
 
+function canonicalSocialPath(parsed: URL, platform: SocialPlatform): string {
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  const first = segments[0]?.toLowerCase() ?? '';
+  if (!segments.length) return '';
+  if (platform === 'linkedin') {
+    if (['company', 'showcase', 'in'].includes(first) && segments[1]) return `/${first}/${segments[1]}`;
+    return '';
+  }
+  if (platform === 'x') {
+    if (xNonProfileRoutes.has(first)) return '';
+    return `/${segments[0]}`;
+  }
+  if (platform === 'facebook') {
+    if (first === 'profile.php') return parsed.searchParams.has('id') ? '/profile.php' : '';
+    if (first === 'pages' || first === 'people' || first === 'page') return parsed.pathname.replace(/\/+$/, '') || '/';
+    if (segments.length === 1 || (segments.length === 2 && facebookProfileSuffixes.has(segments[1].toLowerCase()))) return `/${segments[0]}`;
+    return '';
+  }
+  if (platform === 'bluesky' && first === 'profile' && segments[1]) return `/profile/${segments[1]}`;
+  if (platform === 'mastodon' && segments[0].startsWith('@')) return `/${segments[0]}`;
+  return parsed.pathname.replace(/\/+$/, '') || '/';
+}
+
 function normalizeSocialUrl(value: string, sourceUrl: string): string {
   try {
     const parsed = new URL(value, sourceUrl);
     const platform = socialPlatform(parsed.href);
     if (isUnsafeCompanyUrl(parsed) || !platform || !isSocialProfileUrl(parsed.href, platform)) return '';
+    const canonicalPath = canonicalSocialPath(parsed, platform);
+    if (!canonicalPath) return '';
     parsed.hash = '';
     if (!(platform === 'facebook' && parsed.pathname.toLowerCase() === '/profile.php' && parsed.searchParams.has('id'))) parsed.search = '';
     parsed.hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
-    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    if (platform === 'x') parsed.hostname = 'x.com';
+    parsed.pathname = canonicalPath;
     return parsed.href;
   } catch { return ''; }
 }

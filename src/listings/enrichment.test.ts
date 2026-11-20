@@ -34,4 +34,15 @@ describe('company social enrichment', () => {
     expect(extractSocialLinks('<a href="https://facebook.com/profile.php?id=12345">Facebook</a>', 'https://example.com'))
       .toEqual([{ platform: 'facebook', profileUrl: 'https://facebook.com/profile.php?id=12345', sourceUrl: 'https://example.com' }]);
   });
+
+  it('canonicalizes social content URLs to profile URLs', () => {
+    const links = extractSocialLinks(`<a href="https://linkedin.com/company/example/posts">LinkedIn posts</a>
+      <a href="https://www.linkedin.com/company/example/about">LinkedIn about</a>
+      <a href="https://twitter.com/example/status/123">X post</a>
+      <a href="https://x.com/example">X profile</a>`, 'https://example.com');
+    expect(links).toEqual([
+      { platform: 'linkedin', profileUrl: 'https://linkedin.com/company/example', sourceUrl: 'https://example.com' },
+      { platform: 'x', profileUrl: 'https://x.com/example', sourceUrl: 'https://example.com' }
+    ]);
+  });
 });
