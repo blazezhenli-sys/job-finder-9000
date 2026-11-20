@@ -394,7 +394,11 @@ let rsshubRunning = false;
 export async function pollCompanySocialRsshub() {
   if (rsshubRunning) return;
   rsshubRunning = true;
-  try { await pollCompanySocialLane(['linkedin', 'facebook', 'x'], config.companySocialRsshubConcurrency); }
+  try {
+    const platforms: CompanySocialPlatform[] = ['linkedin', 'facebook'];
+    if (config.enableCompanySocialX) platforms.push('x');
+    await pollCompanySocialLane(platforms, config.companySocialRsshubConcurrency);
+  }
   finally { rsshubRunning = false; }
 }
 
