@@ -14,7 +14,6 @@ import { getMarketDashboard, getMarketTrends } from './listings/analytics.js';
 import type { AtsProvider, AuthorClassification, JobListingStatus, NormalizedPost, OpportunityStatus, SignalCategory } from './types.js';
 import { normalizeCompanyDomain } from './listings/identity.js';
 import { getCompanySocialSignals } from './company-signals.js';
-import { blueskyDisplayCategories } from './post-discovery-policy.js';
 import { normalizeRedlistenWebhook, verifyRedlistenSignature } from './redlisten-webhook.js';
 
 const app = Fastify({ logger: true });
@@ -214,13 +213,10 @@ app.get('/api/market/compare', async (request, reply) => {
 });
 
 app.get('/api/opportunities', async (request) => {
-  const query = request.query as { source?: string; status?: string; sort?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; includeBlueskyAggregators?: string; limit?: string; offset?: string };
+  const query = request.query as { source?: string; status?: string; sort?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
   const conditions: string[] = [];
   const values: unknown[] = [];
   if (query.source && ['bluesky', 'hacker_news', 'mastodon', 'reddit'].includes(query.source)) { values.push(query.source); conditions.push(`source = $${values.length}`); }
-  const blueskyCategories = blueskyDisplayCategories(query.includeBlueskyAggregators === 'true');
-  values.push(blueskyCategories);
-  conditions.push(`(source <> 'bluesky' OR signal_category = ANY($${values.length}::text[]))`);
   // Hide known Reddit moderation bot replies that may have been stored before the ingestion guard existed.
   conditions.push(`NOT (source = 'reddit' AND (text ~* 'your submission has been automatically removed' OR text ~* 'i am a bot, and this action was performed automatically'))`);
   if (query.status && ['unread', 'interesting', 'dismissed', 'contacted'].includes(query.status)) { values.push(query.status); conditions.push(`status = $${values.length}`); }
