@@ -1,9 +1,10 @@
 import { isIP } from 'node:net';
+import { extractEmails, type EmailObservation } from './emails.js';
 
 export type SocialPlatform = 'linkedin' | 'x' | 'github' | 'bluesky' | 'mastodon' | 'youtube' | 'instagram' | 'facebook' | 'tiktok' | 'threads';
 
 export type SocialLink = { platform: SocialPlatform; profileUrl: string; sourceUrl: string };
-export type CompanyEnrichment = { socialLinks: SocialLink[]; careerUrl: string };
+export type CompanyEnrichment = { socialLinks: SocialLink[]; careerUrl: string; emails: EmailObservation[]; scannedEmailPageUrls: string[]; pagesFetched: number };
 
 const socialHosts: Array<[SocialPlatform, Set<string>]> = [
   ['linkedin', new Set(['linkedin.com'])],
@@ -125,6 +126,36 @@ function normalizePublicUrl(value: string, sourceUrl: string): string {
   } catch { return ''; }
 }
 
+function sameSite(value: string, sourceUrl: string): boolean {
+  try {
+    const host = new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+    const sourceHost = new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./, '');
+    return host === sourceHost || host.endsWith(`.${sourceHost}`) || sourceHost.endsWith(`.${host}`);
+  } catch { return false; }
+}
+
+export function extractRelevantPageUrls(html: string, sourceUrl: string, maxPages = 8): string[] {
+  const candidates = new Map<string, { url: string; score: number }>();
+  const anchors = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(anchors)) {
+    const href = normalizePublicUrl(attribute(match[1], 'href'), sourceUrl);
+    if (!href || !sameSite(href, sourceUrl)) continue;
+    try {
+      const parsed = new URL(href);
+      if (parsed.href === new URL(sourceUrl).href || parsed.pathname === '/') continue;
+      const label = text(match[2].replace(/<[^>]+>/g, ''));
+      const context = `${label} ${parsed.pathname}`;
+      if (!/\b(contact|about|team|career|careers|jobs?|hiring|recruit(?:ing)?|work-with-us|join-us|people)\b/i.test(context)) continue;
+      let score = 0;
+      if (/\b(contact|about|career|careers|jobs?|hiring|recruit(?:ing)?|team)\b/i.test(label)) score += 10;
+      if (/\b(contact|about|team|career|careers|jobs?|hiring|recruit(?:ing)?|work-with-us|join-us|people)\b/i.test(parsed.pathname)) score += 6;
+      const current = candidates.get(parsed.href);
+      if (!current || current.score < score) candidates.set(parsed.href, { url: parsed.href, score });
+    } catch { /* ignore malformed links */ }
+  }
+  return [...candidates.values()].sort((a, b) => b.score - a.score || a.url.localeCompare(b.url)).slice(0, maxPages).map((candidate) => candidate.url);
+}
+
 export function extractCareerUrl(html: string, sourceUrl: string): string {
   let best: { url: string; score: number } | undefined;
   const anchors = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
@@ -205,25 +236,47 @@ async function readLimitedBody(response: Response, maxBytes = 2_000_000): Promis
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
-export async function fetchCompanySocialLinks(website: string): Promise<SocialLink[]> {
-  return (await fetchCompanyEnrichment(website)).socialLinks;
-}
-
-export async function fetchCompanyEnrichment(website: string): Promise<CompanyEnrichment> {
+async function fetchCompanyPage(website: string, sameSiteAs?: string): Promise<{ url: string; html: string }> {
   let url = publicHttpUrl(website);
   for (let redirects = 0; redirects <= 3; redirects += 1) {
     const response = await fetch(url, { redirect: 'manual', headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'hiring-signal-discovery-company-enrichment/0.1' }, signal: AbortSignal.timeout(20_000) });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
       if (!location) throw new Error(`Company website redirected without a location (HTTP ${response.status})`);
-      url = publicHttpUrl(new URL(location, url).href);
+      const redirected = publicHttpUrl(new URL(location, url).href);
+      if (sameSiteAs && !sameSite(redirected.href, sameSiteAs)) throw new Error('Company page redirected off the company site');
+      url = redirected;
       continue;
     }
     if (!response.ok) throw new Error(`Company website returned HTTP ${response.status}`);
     const contentType = response.headers.get('content-type') ?? '';
-    if (contentType && !/html|xhtml/i.test(contentType)) return { socialLinks: [], careerUrl: '' };
-    const html = await readLimitedBody(response);
-    return { socialLinks: extractSocialLinks(html, url.href), careerUrl: extractCareerUrl(html, url.href) };
+    if (contentType && !/html|xhtml/i.test(contentType)) return { url: url.href, html: '' };
+    return { url: url.href, html: await readLimitedBody(response) };
   }
   throw new Error('Company website exceeded the redirect limit');
+}
+
+export async function fetchCompanySocialLinks(website: string): Promise<SocialLink[]> {
+  return (await fetchCompanyEnrichment(website)).socialLinks;
+}
+
+export async function fetchCompanyEnrichment(website: string): Promise<CompanyEnrichment> {
+  const homepage = await fetchCompanyPage(website);
+  if (!homepage.html) return { socialLinks: [], careerUrl: '', emails: [], scannedEmailPageUrls: [homepage.url], pagesFetched: 1 };
+  const pages: Array<{ url: string; html: string }> = [homepage];
+  for (const pageUrl of extractRelevantPageUrls(homepage.html, homepage.url)) {
+    try {
+      const page = await fetchCompanyPage(pageUrl, homepage.url);
+      if (page.html) pages.push(page);
+    } catch {
+      // The homepage remains a successful enrichment source. Failed linked
+      // pages are omitted from the scan so their previous observations remain active.
+    }
+  }
+  const socialLinks = [...new Map(pages.flatMap((page) => extractSocialLinks(page.html, page.url)).map((link) => [`${link.platform}:${link.profileUrl}`, link])).values()]
+    .sort((a, b) => a.platform.localeCompare(b.platform) || a.profileUrl.localeCompare(b.profileUrl));
+  const careerUrl = pages.map((page) => extractCareerUrl(page.html, page.url)).find(Boolean) ?? '';
+  const emails = pages.flatMap((page) => extractEmails(page.html, page.url, 'company_page'))
+    .sort((a, b) => a.email.localeCompare(b.email) || a.sourceUrl.localeCompare(b.sourceUrl));
+  return { socialLinks, careerUrl, emails, scannedEmailPageUrls: pages.map((page) => page.url), pagesFetched: pages.length };
 }

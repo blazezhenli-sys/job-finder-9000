@@ -1,7 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { extractCareerUrl, extractSocialLinks } from './enrichment.js';
+import { extractCareerUrl, extractRelevantPageUrls, extractSocialLinks, fetchCompanyEnrichment } from './enrichment.js';
 
 describe('company social enrichment', () => {
+  it('selects bounded relevant same-site pages and excludes external links', () => {
+    const urls = extractRelevantPageUrls(`<a href="/contact">Contact</a>
+      <a href="https://www.example.com/about-us">About us</a>
+      <a href="/careers">Careers</a>
+      <a href="https://external.example/contact">External</a>
+      <a href="/blog">Blog</a>`, 'https://example.com');
+    expect(urls).toEqual(['https://example.com/careers', 'https://example.com/contact', 'https://www.example.com/about-us']);
+  });
+
+  it('extracts homepage and successful linked-page emails while preserving failed-page history boundaries', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/about')) return new Response('unavailable', { status: 503, headers: { 'content-type': 'text/html' } });
+      if (url.endsWith('/contact')) return new Response('<p>contact@example.com</p>', { status: 200, headers: { 'content-type': 'text/html' } });
+      return new Response('<a href="/contact">Contact</a><a href="/about">About</a><p>hello@example.com</p>', { status: 200, headers: { 'content-type': 'text/html' } });
+    }) as typeof fetch;
+    try {
+      const enrichment = await fetchCompanyEnrichment('https://example.com');
+      expect(enrichment.emails.map((email) => email.email)).toEqual(['contact@example.com', 'hello@example.com']);
+      expect(enrichment.pagesFetched).toBe(2);
+      expect(enrichment.scannedEmailPageUrls).toEqual(['https://example.com/', 'https://example.com/contact']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('extracts explicit social profiles from JSON-LD and HTML links', () => {
     const links = extractSocialLinks(`<script type="application/ld+json">{"@type":"Organization","sameAs":["https://www.linkedin.com/company/example/?trk=footer","https://github.com/example"]}</script>
       <footer><a href="https://x.com/example?utm_source=footer">X</a><a href="https://example.com/about">About</a></footer>`, 'https://example.com');

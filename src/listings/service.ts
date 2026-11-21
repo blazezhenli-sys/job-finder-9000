@@ -7,8 +7,9 @@ import { getPreferences, pool, withTransaction } from '../db.js';
 import { config } from '../config.js';
 import type { JobBoard, NormalizedJobListing } from '../types.js';
 import { events } from '../pipeline-service.js';
-import { normalizeCompanyDomain, resolveAtsBoardIdentity } from './identity.js';
+import { identityFromListings, normalizeCompanyDomain, normalizeCompanyName, resolveAtsBoardIdentity } from './identity.js';
 import { resolveExistingBoardEmployer } from './employer-resolution.js';
+import { emailSourceKey, extractEmails } from './emails.js';
 
 let polling = false;
 
@@ -107,6 +108,51 @@ function descriptionHash(value: string): string {
   return createHash('md5').update(value).digest('hex');
 }
 
+type EmailEmployerCandidate = { id: string; name: string; website: string; verified_domain: string; identity_domain: string };
+
+function employerDomain(row: EmailEmployerCandidate): string {
+  return normalizeCompanyDomain(row.identity_domain) || normalizeCompanyDomain(row.verified_domain) || normalizeCompanyDomain(row.website);
+}
+
+function resolveListingEmailEmployer(board: JobBoard, listing: NormalizedJobListing, candidates: EmailEmployerCandidate[]): string | null {
+  if (board.provider !== 'remotive' && board.provider !== 'adzuna') return board.employerId;
+  const identity = identityFromListings([listing]);
+  const domain = identity.domain ? normalizeCompanyDomain(identity.domain) : '';
+  if (domain) {
+    const matches = candidates.filter((candidate) => employerDomain(candidate) === domain);
+    if (matches.length === 1) return matches[0].id;
+  }
+  const name = listing.companyName ? normalizeCompanyName(listing.companyName) : '';
+  if (name) {
+    const matches = candidates.filter((candidate) => normalizeCompanyName(candidate.name) === name);
+    if (matches.length === 1) return matches[0].id;
+  }
+  return null;
+}
+
+async function reconcileListingEmails(client: PoolClient, listingId: string, emails: ReturnType<typeof extractEmails>, employerId: string | null) {
+  for (const email of emails) {
+    const key = emailSourceKey(`listing:${listingId}`, email.email, '');
+    await client.query(`INSERT INTO job_listing_emails (listing_id, email, category, source_url, source_key)
+      VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (source_key) DO UPDATE SET category=EXCLUDED.category, source_url=EXCLUDED.source_url, is_active=true, last_seen_at=now(), updated_at=now()`, [listingId, email.email, email.category, email.sourceUrl, key]);
+    if (!employerId) continue;
+    const canonical = await client.query(`INSERT INTO company_emails (employer_id, email, category) VALUES ($1,$2,$3)
+      ON CONFLICT (employer_id, email) DO UPDATE SET category=EXCLUDED.category, is_active=true, last_seen_at=now(), updated_at=now() RETURNING id`, [employerId, email.email, email.category]);
+    await client.query(`INSERT INTO company_email_sources (company_email_id, listing_id, source_type, source_url, source_key, evidence)
+      VALUES ($1,$2,'job_listing',$3,$4,$5)
+      ON CONFLICT (source_key) DO UPDATE SET source_url=EXCLUDED.source_url, evidence=EXCLUDED.evidence, is_active=true, last_seen_at=now(), updated_at=now()`, [canonical.rows[0].id, listingId, email.sourceUrl, key, email.evidence]);
+  }
+  await client.query(`UPDATE job_listing_emails SET is_active=false, updated_at=now() WHERE listing_id=$1`, [listingId]);
+  for (const email of emails) await client.query(`UPDATE job_listing_emails SET is_active=true, last_seen_at=now(), updated_at=now() WHERE source_key=$1`, [emailSourceKey(`listing:${listingId}`, email.email, '')]);
+  await client.query(`UPDATE company_email_sources SET is_active=false, updated_at=now() WHERE listing_id=$1 AND source_type='job_listing'`, [listingId]);
+  if (employerId) {
+    for (const email of emails) await client.query(`UPDATE company_email_sources SET is_active=true, last_seen_at=now(), updated_at=now() WHERE source_key=$1`, [emailSourceKey(`listing:${listingId}`, email.email, '')]);
+  }
+  await client.query(`UPDATE company_emails AS e SET is_active=EXISTS (SELECT 1 FROM company_email_sources s WHERE s.company_email_id=e.id AND s.is_active)
+    WHERE e.id IN (SELECT company_email_id FROM company_email_sources WHERE listing_id=$1)`, [listingId]);
+}
+
 async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typeof getPreferences>>, taskId: string): Promise<PollTaskResult> {
   await pool.query(`UPDATE listing_poll_tasks SET status='running', started_at=now() WHERE id=$1`, [taskId]);
   events.emit('listing-task', { taskId, status: 'running', boardId: board.id, provider: board.provider, boardIdentifier: board.boardIdentifier });
@@ -138,6 +184,9 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
       md5(description) AS description_hash
     FROM job_listings WHERE board_id=$1`, [board.id]);
   const existingIds = new Set(existing.rows.map((row) => row.provider_job_id as string));
+  const emailEmployerCandidates: EmailEmployerCandidate[] = board.provider === 'remotive' || board.provider === 'adzuna'
+    ? (await pool.query('SELECT id, name, website, verified_domain, identity_domain FROM employers WHERE id <> $1', [board.employerId])).rows
+    : [];
   const baseline = !board.initializedAt;
   let newCount = 0;
   let newEngineeringCount = 0;
@@ -152,6 +201,8 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
       const technologies = classification.technologies;
       if (engineeringSpecialties.length) engineeringCount += 1;
       const compensation = normalizeCompensation(listing.compensation);
+      const listingEmails = extractEmails(`${listing.descriptionHtml ?? ''}\n${listing.description}`, listing.originalUrl || listing.applicationUrl || board.boardUrl, 'job_listing');
+      const listingEmailEmployer = resolveListingEmailEmployer(board, listing, emailEmployerCandidates);
       const isNew = !existingIds.has(listing.providerJobId);
       const previous = existing.rows.find((row) => row.provider_job_id === listing.providerJobId);
       if (isNew) newCount += 1;
@@ -200,6 +251,7 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
         RETURNING id`, [board.id, board.provider, listing.providerJobId, listing.title, listing.descriptionHtml ?? '', listing.description, listing.department ?? '', listing.team ?? '', listing.location ?? '', JSON.stringify(listing.secondaryLocations ?? []), listing.remoteMode ?? 'unknown', JSON.stringify(listing.geographicRestrictions ?? []), listing.employmentType ?? '', listing.seniority ?? '', JSON.stringify(listing.compensation ?? {}), compensation.min ?? null, compensation.max ?? null, compensation.currency ?? '', compensation.period ?? '', Boolean(compensation.estimated), listing.applicationUrl, listing.originalUrl, listing.publishedAt, listing.updatedAt, checkedAt, analysis.personalRelevance, JSON.stringify(analysis.relevanceBreakdown), JSON.stringify(analysis.locationSignals), analysis.locationFit, analysis.locationFitScore, JSON.stringify(analysis.locationFitReasons), JSON.stringify(listing.raw), listing.companyName ?? '', JSON.stringify(engineeringSpecialties), JSON.stringify(technologies), classification.jobCategory, classification.primarySpecialty, classification.version, classification.method]);
       const listingId = result.rows[0]?.id as string | undefined ?? previous?.id as string | undefined;
       if (!listingId) throw new Error(`Listing upsert returned no id for ${listing.providerJobId}`);
+      await reconcileListingEmails(client, listingId, listingEmails, listingEmailEmployer);
       const currentCompensation = { min: compensation.min ?? null, max: compensation.max ?? null, currency: compensation.currency ?? '', period: compensation.period ?? '' };
       const currentDescriptionHash = descriptionHash(listing.description);
       if (isNew) {
@@ -225,6 +277,12 @@ async function processBoard(board: JobBoard, preferences: Awaited<ReturnType<typ
     }
     await client.query(`UPDATE job_listings SET consecutive_missing_checks=consecutive_missing_checks+1, is_active=CASE WHEN consecutive_missing_checks+1 >= 3 THEN false ELSE is_active END, updated_at=now()
       WHERE board_id=$1 AND is_active=true AND NOT (provider_job_id = ANY($2::text[]))`, [board.id, observedIds]);
+    await client.query(`UPDATE job_listing_emails SET is_active=false, updated_at=now()
+      WHERE listing_id IN (SELECT id FROM job_listings WHERE board_id=$1 AND is_active=false)`, [board.id]);
+    await client.query(`UPDATE company_email_sources SET is_active=false, updated_at=now()
+      WHERE source_type='job_listing' AND listing_id IN (SELECT id FROM job_listings WHERE board_id=$1 AND is_active=false)`, [board.id]);
+    await client.query(`UPDATE company_emails AS e SET is_active=EXISTS (SELECT 1 FROM company_email_sources s WHERE s.company_email_id=e.id AND s.is_active)
+      WHERE e.id IN (SELECT company_email_id FROM company_email_sources WHERE listing_id IN (SELECT id FROM job_listings WHERE board_id=$1 AND is_active=false))`, [board.id]);
     await client.query(`UPDATE job_boards SET initialized_at=COALESCE(initialized_at, now()), last_successful_poll=now(), last_attempted_poll=now(), last_new_listing_discovered=CASE WHEN $2 > 0 THEN now() ELSE last_new_listing_discovered END, consecutive_failure_count=0, last_error=NULL, updated_at=now() WHERE id=$1`, [board.id, newCount]);
     await client.query(`INSERT INTO listing_board_observations (board_id, listings_seen, active_engineering, new_listings, new_engineering, missing_listings) VALUES ($1,$2,$3,$4,$5,$6)`, [board.id, listings.length, engineeringCount, baseline ? 0 : newCount, baseline ? 0 : newEngineeringCount, missingCount]);
   });

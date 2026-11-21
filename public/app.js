@@ -377,6 +377,7 @@ renderCompanyProfile = function(data) {
   const company = data.company || {};
   if (company.website || company.career_url) $('#company-profile-subtitle').innerHTML = [company.website ? `<a class="source-link" href="${esc(company.website)}" target="_blank" rel="noreferrer">${esc(company.website)} ↗</a>` : '', company.career_url ? `<a class="source-link" href="${esc(company.career_url)}" target="_blank" rel="noreferrer">Careers ↗</a>` : ''].filter(Boolean).join(' · ');
   const socialLinks = data.socialLinks || [];
+  const emails = data.emails || [];
   const profileGrid = document.querySelector('#company-profile .company-profile-grid');
   profileGrid?.classList.add('company-details-grid');
   const platformLabel = { bluesky: 'Bluesky', mastodon: 'Mastodon', youtube: 'YouTube', linkedin: 'LinkedIn', facebook: 'Facebook', x: 'X' };
@@ -384,6 +385,12 @@ renderCompanyProfile = function(data) {
   const socialTimeline = socialActivity.length ? socialActivity.map((post) => `<article class="company-social-post"><div class="company-social-post-top"><span class="source-label"><b>${esc(platformLabel[post.platform] || post.platform)}</b> · ${esc(post.author_name || post.author_handle || 'Company account')}</span><span class="subtle">${relative(post.published_at)}</span></div><p>${esc(post.text)}</p><div class="opp-meta"><span>${esc(post.author_handle || '')}</span><a class="source-link" href="${esc(post.source_url)}" target="_blank" rel="noreferrer">View original ↗</a></div></article>`).join('') : '<p class="subtle">No recent original public posts have been collected yet.</p>';
   if (profileGrid) {
     profileGrid.insertAdjacentHTML('beforeend', `<div class="company-panel company-social-panel"><div class="company-panel-heading"><h2>Social profiles</h2><span class="subtle">${socialLinks.length} discovered</span></div>${socialLinks.length ? socialLinks.map((link) => `<div class="health-row"><span>${esc(platformLabel[link.platform] || link.platform)}</span><a class="source-link" href="${esc(link.profile_url)}" target="_blank" rel="noreferrer">Open profile ↗</a></div>`).join('') : '<p class="subtle">No explicit social profiles found yet.</p>'}</div>`);
+    const emailRows = emails.map((email) => {
+      const sources = Array.isArray(email.sources) ? email.sources : [];
+      const sourceLinks = sources.map((source) => source.sourceUrl ? `<a class="source-link" href="${esc(source.sourceUrl)}" target="_blank" rel="noreferrer">${source.sourceType === 'job_listing' ? 'Job listing' : 'Company page'} ↗</a>` : '').filter(Boolean).join(' · ');
+      return `<div class="health-row"><span><a class="source-link" href="mailto:${esc(email.email)}">${esc(email.email)}</a><small class="subtle"> · ${esc(String(email.category || 'other'))}</small></span><span>${sourceLinks || '<span class="subtle">Source unavailable</span>'}</span></div>`;
+    }).join('');
+    profileGrid.insertAdjacentHTML('beforeend', `<div class="company-panel company-email-panel"><div class="company-panel-heading"><h2>Public emails</h2><span class="subtle">${emails.length} active</span></div>${emailRows || '<p class="subtle">No public emails found yet.</p>'}</div>`);
     profileGrid.insertAdjacentHTML('afterend', `<div class="company-panel company-social-activity"><div class="company-panel-heading"><div><h2>Social activity</h2><p class="subtle">Original public posts from discovered company accounts · latest 50</p></div></div><div class="company-social-timeline">${socialTimeline}</div></div>`);
   }
   const boardPanel = [...document.querySelectorAll('#company-profile .company-panel')].find((panel) => panel.querySelector('h2')?.textContent.trim() === 'ATS boards');

@@ -347,7 +347,8 @@ app.get('/api/companies', async (request) => {
     GROUP BY e.id
   )
   SELECT e.id, e.name, e.website, e.identity_domain, e.identity_name_source, e.identity_domain_source, e.identity_confidence, e.verified_domain, e.description, e.industry, e.headquarters, e.company_size, e.prospect_status, e.first_discovered_at, e.updated_at,
-    metrics.board_count, metrics.active_board_count, metrics.active_listing_count, metrics.new_listings_7d, metrics.new_listings_30d, metrics.active_engineering, metrics.new_engineering_7d, metrics.new_engineering_30d, metrics.remote_listing_count, metrics.contract_listing_count, metrics.latest_hiring_activity, metrics.latest_listing_date, metrics.providers
+    metrics.board_count, metrics.active_board_count, metrics.active_listing_count, metrics.new_listings_7d, metrics.new_listings_30d, metrics.active_engineering, metrics.new_engineering_7d, metrics.new_engineering_30d, metrics.remote_listing_count, metrics.contract_listing_count, metrics.latest_hiring_activity, metrics.latest_listing_date, metrics.providers,
+    COALESCE((SELECT count(*)::int FROM company_emails ce WHERE ce.employer_id=e.id AND ce.is_active), 0)::int AS public_email_count
   FROM employers e JOIN metrics ON metrics.id=e.id ${where}`;
   const sort = companySorts[query.sort ?? ''] ?? companySorts.name;
   const result = await pool.query(`${select} ORDER BY ${sort} LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, limit, offset]);
@@ -365,7 +366,7 @@ app.get('/api/companies/:id', async (request, reply) => {
   const id = (request.params as { id: string }).id;
   const company = await pool.query(`SELECT id, name, website, career_url, identity_domain, identity_name_source, identity_domain_source, identity_confidence, verified_domain, description, industry, headquarters, company_size, prospect_status, prospect_notes, follow_up_at, contacted_at, first_discovered_at, updated_at FROM employers WHERE id=$1`, [id]);
   if (!company.rows[0]) return reply.code(404).send({ error: 'Company not found' });
-  const [boards, summary, specialties, listings, activity, dailyActivity, storedSignals, events, socialLinks, socialActivity] = await Promise.all([
+  const [boards, summary, specialties, listings, activity, dailyActivity, storedSignals, events, socialLinks, socialActivity, emails] = await Promise.all([
     pool.query(`SELECT b.*, count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count FROM job_boards b LEFT JOIN job_listings l ON l.board_id=b.id WHERE b.employer_id=$1 GROUP BY b.id ORDER BY b.status, b.provider, b.board_identifier`, [id]),
     pool.query(`SELECT count(l.id) FILTER (WHERE l.is_active)::int AS active_listing_count,
       count(l.id) FILTER (WHERE l.is_active AND jsonb_array_length(l.engineering_specialties) > 0)::int AS active_engineering_count,
@@ -383,13 +384,17 @@ app.get('/api/companies/:id', async (request, reply) => {
     ,pool.query(`SELECT ev.listing_id, ev.event_type, ev.observed_at, ev.source_updated_at, l.title, l.application_url, l.original_url FROM listing_events ev JOIN job_listings l ON l.id=ev.listing_id JOIN job_boards b ON b.id=ev.board_id WHERE b.employer_id=$1 ORDER BY ev.observed_at DESC LIMIT 100`, [id])
     ,pool.query(`SELECT id, platform, profile_url, source_url, first_seen_at, last_seen_at, social_poll_last_attempted_at, social_poll_last_success_at, social_poll_next_at, social_poll_error, social_poll_consecutive_failures FROM company_social_links WHERE employer_id=$1 AND is_active ORDER BY platform, profile_url`, [id])
     ,pool.query(`SELECT id, social_link_id, platform, author_name, author_handle, author_url, source_url, text, published_at, fetched_at FROM company_social_posts WHERE employer_id=$1 ORDER BY published_at DESC LIMIT 50`, [id])
+    ,pool.query(`SELECT ce.id, ce.email, ce.category, ce.first_seen_at, ce.last_seen_at,
+        COALESCE(jsonb_agg(jsonb_build_object('id', ces.id, 'sourceType', ces.source_type, 'sourceUrl', ces.source_url, 'listingId', ces.listing_id, 'evidence', ces.evidence, 'firstSeenAt', ces.first_seen_at, 'lastSeenAt', ces.last_seen_at) ORDER BY ces.source_type, ces.source_url) FILTER (WHERE ces.id IS NOT NULL), '[]'::jsonb) AS sources
+      FROM company_emails ce LEFT JOIN company_email_sources ces ON ces.company_email_id=ce.id AND ces.is_active
+      WHERE ce.employer_id=$1 AND ce.is_active GROUP BY ce.id ORDER BY ce.category, ce.email`, [id])
   ]);
   const summaryRow = summary.rows[0] ?? {};
   const prospect = calculateProspectScore({ activeListings: Number(summaryRow.active_listing_count), newListings7d: Number(summaryRow.new_listing_count_7d), hasRecentActivity: Boolean(summaryRow.last_successful_monitoring && new Date(summaryRow.last_successful_monitoring).getTime() >= Date.now() - 30 * 86_400_000) });
   const signals: Array<{ type: string; label: string; explanation: string }> = [];
   const recentNewListings = (dailyActivity.rows.length ? dailyActivity.rows : activity.rows).filter((row) => new Date(row.day).getTime() >= Date.now() - 30 * 86_400_000).reduce((total, row) => total + Number(row.new_listings), 0);
   if (recentNewListings >= 3) signals.push({ type: 'hiring_expansion', label: 'Hiring expansion', explanation: `${recentNewListings} openings were observed after board baselines in the last 30 days.` });
-  return { company: { ...company.rows[0], prospect_score: prospect.score, prospect_score_factors: prospect.factors }, boards: boards.rows, summary: summaryRow, specialties: specialties.rows.map((row) => ({ ...row, label: engineeringSpecialtyLabels[row.specialty] || row.specialty })), listings: listings.rows, activity: activity.rows, dailyActivity: dailyActivity.rows, signals: [...signals, ...storedSignals.rows], events: events.rows, socialLinks: socialLinks.rows, socialActivity: socialActivity.rows };
+  return { company: { ...company.rows[0], prospect_score: prospect.score, prospect_score_factors: prospect.factors }, boards: boards.rows, summary: summaryRow, specialties: specialties.rows.map((row) => ({ ...row, label: engineeringSpecialtyLabels[row.specialty] || row.specialty })), listings: listings.rows, activity: activity.rows, dailyActivity: dailyActivity.rows, signals: [...signals, ...storedSignals.rows], events: events.rows, socialLinks: socialLinks.rows, socialActivity: socialActivity.rows, emails: emails.rows };
 });
 
 app.get('/api/companies/:id/social-activity', async (request) => {
@@ -427,12 +432,13 @@ app.patch('/api/companies/:id', async (request, reply) => {
 
 app.get('/api/listings/:id', async (request, reply) => {
   const listingId = (request.params as { id: string }).id;
-  const [result, eventsResult] = await Promise.all([
+  const [result, eventsResult, emailsResult] = await Promise.all([
     pool.query(`SELECT l.*, b.board_identifier, b.board_url, e.id AS employer_id, e.name AS employer_name, e.website AS employer_website FROM job_listings l JOIN job_boards b ON b.id = l.board_id JOIN employers e ON e.id = b.employer_id WHERE l.id = $1`, [listingId]),
-    pool.query(`SELECT event_type, observed_at, source_updated_at, previous_value, current_value, metadata FROM listing_events WHERE listing_id=$1 ORDER BY observed_at DESC LIMIT 100`, [listingId])
+    pool.query(`SELECT event_type, observed_at, source_updated_at, previous_value, current_value, metadata FROM listing_events WHERE listing_id=$1 ORDER BY observed_at DESC LIMIT 100`, [listingId]),
+    pool.query(`SELECT id, email, category, source_url, first_seen_at, last_seen_at FROM job_listing_emails WHERE listing_id=$1 AND is_active ORDER BY category, email`, [listingId])
   ]);
   if (!result.rows[0]) return reply.code(404).send({ error: 'Listing not found' });
-  return { ...result.rows[0], events: eventsResult.rows };
+  return { ...result.rows[0], events: eventsResult.rows, emails: emailsResult.rows };
 });
 
 app.patch('/api/listings/:id', async (request, reply) => {
