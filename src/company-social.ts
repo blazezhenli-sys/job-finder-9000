@@ -386,7 +386,50 @@ async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (i
   }));
 }
 
+async function recoverStaleTasks() {
+  const recovered = await pool.query(`
+    WITH stale AS (
+      SELECT id
+      FROM company_social_poll_tasks
+      WHERE status IN ('queued', 'running')
+        AND COALESCE(started_at, queued_at) < now() - ($1::text || ' milliseconds')::interval
+    ), recovered AS (
+      UPDATE company_social_poll_tasks t
+      SET status = 'failed',
+          completed_at = now(),
+          error = COALESCE(t.error, 'Recovered stale task after worker interruption')
+      FROM stale s
+      WHERE t.id = s.id
+      RETURNING t.id, t.social_link_id, t.employer_id, t.platform, t.profile_url, t.error
+    )
+    UPDATE company_social_links l
+    SET social_poll_last_attempted_at = now(),
+        social_poll_next_at = now(),
+        social_poll_error = r.error,
+        social_poll_consecutive_failures = l.social_poll_consecutive_failures + 1,
+        updated_at = now()
+    FROM recovered r
+    WHERE l.id = r.social_link_id
+    RETURNING r.id, r.employer_id, r.platform, r.profile_url, r.error
+  `, [config.companySocialStaleTaskMs]);
+
+  for (const task of recovered.rows) {
+    events.emit('company-social-task', {
+      taskId: task.id,
+      employerId: task.employer_id,
+      platform: task.platform,
+      profileUrl: task.profile_url,
+      status: 'failed',
+      postsSeen: 0,
+      newPosts: 0,
+      error: task.error,
+    });
+  }
+  if (recovered.rowCount) console.warn(`Recovered ${recovered.rowCount} stale company social task(s)`);
+}
+
 async function pollCompanySocialLane(platforms: CompanySocialPlatform[], concurrency: number) {
+  await recoverStaleTasks();
   await pool.query(`DELETE FROM company_social_posts WHERE published_at < now() - ($1::text || ' days')::interval`, [config.companySocialRetentionDays]);
   const queued = await queueDueTasks(platforms);
   await runWithConcurrency(queued, concurrency, processTask);
