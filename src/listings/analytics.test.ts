@@ -42,10 +42,10 @@ describe('market dashboard calculations', () => {
       ...current
     ];
     expect(marketDashboardDeltaSeries(current, comparison)).toEqual([
-      expect.objectContaining({ snapshot_date: '2026-11-02', dimension_value: 'engineering', active_delta: 20, share_delta: 0.1 }),
-      expect.objectContaining({ snapshot_date: '2026-11-02', dimension_value: 'product', active_delta: -20, share_delta: -0.1 }),
-      expect.objectContaining({ snapshot_date: '2026-11-03', dimension_value: 'engineering', active_delta: 15, share_delta: 0.075 }),
-      expect.objectContaining({ snapshot_date: '2026-11-03', dimension_value: 'product', active_delta: -80, share_delta: -0.4 })
+      expect.objectContaining({ snapshot_date: '2026-11-02', dimension_value: 'engineering', active_delta: 20, share_delta: 0.1, share_change_pct: 20 }),
+      expect.objectContaining({ snapshot_date: '2026-11-02', dimension_value: 'product', active_delta: -20, share_delta: -0.1, share_change_pct: -20 }),
+      expect.objectContaining({ snapshot_date: '2026-11-03', dimension_value: 'engineering', active_delta: 15, share_delta: 0.075, share_change_pct: 12.5 }),
+      expect.objectContaining({ snapshot_date: '2026-11-03', dimension_value: 'product', active_delta: -80, share_delta: -0.4, share_change_pct: -100 })
     ]);
   });
 

@@ -223,13 +223,16 @@ export function marketDashboardDeltaSeries(currentMetrics: any[], comparisonMetr
     for (const dimension of dimensions) {
       const currentRow = current.get(dimension) ?? {};
       const priorRow = prior.get(dimension) ?? {};
+      const currentShare = Number(currentRow.active_share || 0);
+      const priorShare = Number(priorRow.active_share || 0);
       output.push({
         snapshot_date: period,
         dimension_value: dimension,
         active_listings: Number(currentRow.active_listings || 0),
-        active_share: Number(currentRow.active_share || 0),
+        active_share: currentShare,
         active_delta: Number(currentRow.active_listings || 0) - Number(priorRow.active_listings || 0),
-        share_delta: Math.round((Number(currentRow.active_share || 0) - Number(priorRow.active_share || 0)) * 1000000) / 1000000,
+        share_delta: Math.round((currentShare - priorShare) * 1000000) / 1000000,
+        share_change_pct: priorShare > 0 ? Math.round(((currentShare - priorShare) / priorShare) * 100 * 1000000) / 1000000 : null,
         new_listings: Number(currentRow.new_listings || 0),
         removed_listings: Number(currentRow.removed_listings || 0)
       });
