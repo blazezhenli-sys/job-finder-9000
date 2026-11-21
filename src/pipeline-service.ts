@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { pool, getAggregatorRegistry, getPreferences, getRules, withTransaction } from './db.js';
-import { analyzePost, detectionLatencyMs, extractOutboundDomains, notificationEligible } from './pipeline.js';
+import { analyzePost, detectionLatencyMs, extractOutboundDomains, isAutomatedModerationMessage, notificationEligible } from './pipeline.js';
 import type { NormalizedPost, SourceName } from './types.js';
 
 export const events = new EventEmitter();
@@ -66,6 +66,10 @@ async function flushHealth() {
 
 export async function processPost(post: NormalizedPost, cursor?: string, recovered = false, options: { notify?: boolean } = {}) {
   const notify = options.notify !== false;
+  if (isAutomatedModerationMessage(post)) {
+    queueStats(post.source, { cursor });
+    return;
+  }
   const { rules, preferences, registry } = await pipelineConfig();
   let author: Awaited<ReturnType<typeof existingAuthor>>;
   let analysis = analyzePost(post, rules, preferences, undefined, registry);

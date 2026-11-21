@@ -7,6 +7,12 @@ export function normalizeText(text: string): string {
   return text.normalize('NFKC').replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/\s+/g, ' ').trim();
 }
 
+export function isAutomatedModerationMessage(post: NormalizedPost): boolean {
+  if (post.source !== 'reddit') return false;
+  const text = normalizeText(post.text);
+  return /your submission has been automatically removed/i.test(text) && (/(?:i am|i'm) a bot/i.test(text) || /contact the moderators/i.test(text) || /check the sidebar/i.test(text));
+}
+
 function containsTerm(text: string, term: string): boolean {
   const escaped = term.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
   return escaped.length > 0 && new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(text);

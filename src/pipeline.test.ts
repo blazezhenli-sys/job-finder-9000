@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultPreferences } from './db.js';
-import { analyzePost, detectionLatencyMs, extractLocationSignals, normalizeText, notificationEligible, stableOpportunityKey } from './pipeline.js';
+import { analyzePost, detectionLatencyMs, extractLocationSignals, isAutomatedModerationMessage, normalizeText, notificationEligible, stableOpportunityKey } from './pipeline.js';
 import type { DetectionRule, NormalizedPost } from './types.js';
 
 const post: NormalizedPost = {
@@ -24,6 +24,11 @@ const relevancePreferences = {
 
 describe('hiring signal pipeline', () => {
   it('normalizes punctuation and whitespace', () => expect(normalizeText('  We\u2019re   hiring\nnow  ')).toBe("We're hiring now"));
+  it('recognizes Reddit moderation bot replies as non-post content', () => {
+    const moderation = { ...post, source: 'reddit' as const, text: 'Your submission has been automatically removed because the title does not include one of the required title elements. I am a bot, and this action was performed automatically.' };
+    expect(isAutomatedModerationMessage(moderation)).toBe(true);
+    expect(isAutomatedModerationMessage(post)).toBe(false);
+  });
   it('matches configured phrases case-insensitively and scores explicit evidence', () => {
     const result = analyzePost(post, rules, relevancePreferences);
     expect(result.blocked).toBe(false);

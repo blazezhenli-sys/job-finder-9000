@@ -221,6 +221,8 @@ app.get('/api/opportunities', async (request) => {
   const blueskyCategories = blueskyDisplayCategories(query.includeBlueskyAggregators === 'true');
   values.push(blueskyCategories);
   conditions.push(`(source <> 'bluesky' OR signal_category = ANY($${values.length}::text[]))`);
+  // Hide known Reddit moderation bot replies that may have been stored before the ingestion guard existed.
+  conditions.push(`NOT (source = 'reddit' AND (text ~* 'your submission has been automatically removed' OR text ~* 'i am a bot, and this action was performed automatically'))`);
   if (query.status && ['unread', 'interesting', 'dismissed', 'contacted'].includes(query.status)) { values.push(query.status); conditions.push(`status = $${values.length}`); }
   if (query.minQuality && Number.isFinite(Number(query.minQuality))) { values.push(Number(query.minQuality)); conditions.push(`signal_quality >= $${values.length}`); }
   if (query.signalCategory && ['direct_hiring', 'service_request', 'employee_referral', 'firsthand_announcement', 'aggregated_listing', 'uncertain'].includes(query.signalCategory)) { values.push(query.signalCategory); conditions.push(`signal_category = $${values.length}`); }
