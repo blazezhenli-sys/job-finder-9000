@@ -139,7 +139,8 @@ const renderSignalDrawer = openDrawer;
 openDrawer = async function(id) {
   await renderSignalDrawer(id);
   const content = $('#drawer-content');
-  content.innerHTML = content.innerHTML.replace(/<span class="pill">Personal relevance [^<]*<\/span>/, '').replace(/<div class="detail-section"><h3>Personal relevance breakdown<\/h3>[\s\S]*?<\/div>$/, '');
+  [...content.querySelectorAll('.pill')].find((pill) => pill.textContent.startsWith('Personal relevance '))?.remove();
+  [...content.querySelectorAll('.detail-section')].find((section) => section.querySelector('h3')?.textContent.trim() === 'Personal relevance breakdown')?.remove();
 };
 async function loadRules() { state.rules = (await api('/api/rules')).rules; $('#rules').innerHTML = state.rules.map((rule) => ruleEditor(rule)).join(''); bindRuleEvents(); }
 function ruleEditor(rule = {}) { return `<div class="rule-card" data-id="${esc(rule.id || '')}"><input data-field="name" placeholder="Rule name" value="${esc(rule.name || '')}"><input data-field="pattern" placeholder="Phrase or regular expression" value="${esc(rule.pattern || '')}"><select data-field="match_type"><option value="phrase" ${rule.match_type === 'phrase' ? 'selected' : ''}>phrase</option><option value="regex" ${rule.match_type === 'regex' ? 'selected' : ''}>regex</option></select><input data-field="weight" type="number" min="0" max="100" placeholder="points" value="${Number(rule.weight || 0)}"><label class="toggle"><input data-field="enabled" type="checkbox" ${rule.enabled !== false ? 'checked' : ''}> enabled</label><label class="toggle negative"><input data-field="negative" type="checkbox" ${rule.negative ? 'checked' : ''}> negative</label><button class="button secondary save-rule">Save</button><button class="button secondary delete-rule">Delete</button></div>`; }
