@@ -68,8 +68,8 @@
     <div id="market-dashboard-loading" class="empty hidden"><p>Loading market snapshots…</p></div>
     <div id="market-dashboard-content">
       <div class="market-dashboard-chart-grid"><div class="market-panel market-chart-panel"><div class="company-panel-heading"><div><h2 id="market-volume-title">Observed volume</h2><p class="subtle">Active observed openings over time.</p></div></div><div id="market-volume-chart"></div></div><div class="market-panel market-chart-panel"><div class="company-panel-heading"><div><h2 id="market-share-title">Observed share</h2><p class="subtle">Each period totals 100% of the selected cohort.</p></div></div><div id="market-share-chart"></div></div></div>
-      <div class="market-panel market-chart-panel"><div class="company-panel-heading"><div><h2>Opening flow</h2><p class="subtle">New and removed observed openings by period.</p></div></div><div id="market-flow-chart"></div></div>
       <div class="market-panel"><div class="company-panel-heading"><div><h2 id="market-ranking-title">Current mix</h2><p class="subtle">Click a value to focus the charts, or open its evidence.</p></div></div><div id="market-rankings"></div></div>
+      <div class="market-dashboard-chart-grid"><div class="market-panel market-chart-panel"><div class="company-panel-heading"><div><h2>Volume change</h2><p class="subtle">Period-over-period change in active observed openings.</p></div></div><div id="market-volume-delta-chart"></div></div><div class="market-panel market-chart-panel"><div class="company-panel-heading"><div><h2>Share change</h2><p class="subtle">Period-over-period change in sector share, in percentage points.</p></div></div><div id="market-share-delta-chart"></div></div></div>
       <div class="market-panel"><h2>Market signals</h2><div id="market-dashboard-signals"><p class="subtle">No sufficiently supported signals yet.</p></div></div>
       <details class="market-panel market-analysis-tools"><summary>Analysis tools</summary><div class="segment-grid"><label>Segment A<select id="market-compare-a"><option value="">Choose category</option></select></label><label>Segment B<select id="market-compare-b"><option value="">Choose category</option></select></label><label>Work mode<select id="market-compare-work-mode"><option value="">Any work mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label><label>Employment<select id="market-compare-employment"><option value="">Any employment type</option><option value="full">Full-time</option><option value="contract">Contract</option><option value="freelance">Freelance</option></select></label></div><button id="market-compare-button" class="button secondary" type="button">Compare segments</button><div id="market-comparison" class="comparison-grid"><p class="subtle">Choose two categories to compare.</p></div><div class="market-taxonomy-tools"><h3>Technology taxonomy</h3><form id="market-taxonomy-form" class="filters"><input name="canonical" placeholder="Canonical technology" required><input name="alias" placeholder="Alias" required><button class="button secondary" type="submit">Add alias</button></form><div id="market-taxonomy" class="facet-list"></div></div></details>
     </div>
@@ -197,29 +197,39 @@
     return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(title) + '"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight) + '" y2="' + (top + plotHeight) + '" class="chart-axis"></line><line x1="' + left + '" x2="' + (width - right) + '" y1="' + top + '" y2="' + top + '" class="chart-gridline"></line>' + paths + totalLine + periodHoverZones + hoverPoints + labels + '</svg><div class="market-chart-legend">' + legend + '</div></div>';
   }
 
-  function flowSvg(data) {
-    const grouped = groupSeries(data);
-    if (!grouped.rows.length) return '<p class="subtle">No snapshot flow is available for this period and cohort yet.</p>';
-    const width = 900, height = 230, left = 42, right = 16, top = 18, bottom = 34;
-    const plotWidth = width - left - right, plotHeight = height - top - bottom;
-    const maxValue = Math.max(1, ...grouped.rows.map((entry) => [...entry.values.values()].reduce((sum, row) => sum + Number(row.new_listings || 0) + Number(row.removed_listings || 0), 0)));
+  function groupDeltaSeries(data) {
+    const rows = data.delta_series || [];
+    const periods = [...new Set(rows.map((row) => String(row.snapshot_date)))].sort();
+    const keyTotals = new Map();
+    rows.forEach((row) => keyTotals.set(row.dimension_value, (keyTotals.get(row.dimension_value) || 0) + Math.abs(Number(row.active_delta || 0))));
+    const keys = [...keyTotals.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, 8).map(([key]) => key);
+    const selected = state.focus && keyTotals.has(state.focus) ? state.focus : '';
+    const hasRemaining = selected ? rows.some((row) => row.dimension_value !== selected) : rows.some((row) => !keys.includes(row.dimension_value));
+    return { periods, rows: periods.map((period) => { const values = new Map(rows.filter((row) => String(row.snapshot_date) === period).map((row) => [row.dimension_value, row])); return { period, values, all: [...values.values()], chartKeys: selected ? [selected, ...(hasRemaining ? ['__remaining'] : [])] : [...keys, ...(hasRemaining ? ['__remaining'] : [])] }; }) };
+  }
+
+  function deltaSvg(data, field, title) {
+    const grouped = groupDeltaSeries(data);
+    if (!data.delta_series) return '<p class="subtle">Period-over-period change is shown for the unfiltered historical cohort.</p>';
+    if (!grouped.rows.length) return '<p class="subtle">No period-over-period changes are available for this view yet.</p>';
+    const width = 900, height = 285, left = 42, right = 16, top = 18, bottom = 34;
+    const plotWidth = width - left - right, plotHeight = height - top - bottom, zero = top + plotHeight / 2;
+    const valuesFor = (entry, key) => {
+      const value = (row) => Number(row?.[field === 'share' ? 'share_delta' : 'active_delta'] || 0);
+      if (key === '__remaining') return entry.all.reduce((sum, row) => sum + value(row), 0) - entry.chartKeys.filter((item) => item !== '__remaining').reduce((sum, item) => sum + value(entry.values.get(item)), 0);
+      return value(entry.values.get(key));
+    };
+    const scaleValue = (value) => field === 'share' ? value * 100 : value;
+    const maxValue = Math.max(1, ...grouped.rows.map((entry) => { let positive = 0, negative = 0; entry.chartKeys.forEach((key) => { const value = scaleValue(valuesFor(entry, key)); if (value >= 0) positive += value; else negative += value; }); return Math.max(positive, Math.abs(negative)); }));
+    const x = (index) => left + plotWidth * ((index + .5) / Math.max(1, grouped.rows.length));
+    const y = (value) => zero - (value / maxValue) * (plotHeight / 2);
     const slotWidth = plotWidth / Math.max(1, grouped.rows.length);
-    const barWidth = Math.max(4, Math.min(32, slotWidth * .7));
-    const hasFlow = grouped.rows.some((entry) => [...entry.values.values()].some((row) => Number(row.new_listings || 0) > 0 || Number(row.removed_listings || 0) > 0));
-    const bars = grouped.rows.map((entry, index) => {
-      const added = [...entry.values.values()].reduce((sum, row) => sum + Number(row.new_listings || 0), 0);
-      const removed = [...entry.values.values()].reduce((sum, row) => sum + Number(row.removed_listings || 0), 0);
-      const scale = (plotHeight / 2) / maxValue;
-      const x = left + slotWidth * (index + .5);
-      const addedHeight = added * scale, removedHeight = removed * scale;
-      return '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight / 2 - addedHeight) + '" width="' + (barWidth / 2 - 1) + '" height="' + addedHeight + '" class="flow-new chart-hover-target" data-tooltip="' + esc('New observed: +' + added.toLocaleString()) + '"><title>' + esc(entry.period) + ': +' + added.toLocaleString() + ' new</title></rect><rect x="' + (x + 1) + '" y="' + (top + plotHeight / 2) + '" width="' + (barWidth / 2 - 1) + '" height="' + removedHeight + '" class="flow-removed chart-hover-target" data-tooltip="' + esc('Removed observed: ' + removed.toLocaleString()) + '"><title>' + esc(entry.period) + ': ' + removed.toLocaleString() + ' removed</title></rect>';
-    }).join('');
-    const labels = grouped.rows.filter((entry, index) => index === 0 || index === grouped.rows.length - 1 || index % Math.max(1, Math.floor(grouped.rows.length / 4)) === 0).map((entry) => {
-      const index = grouped.periods.indexOf(entry.period);
-      const x = left + slotWidth * (index + .5);
-      return '<text x="' + x + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(String(entry.period).slice(0, 10)) + '</text>';
-    }).join('');
-    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="New and removed openings"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + (top + plotHeight / 2) + '" y2="' + (top + plotHeight / 2) + '" class="chart-axis"></line>' + bars + (hasFlow ? '' : '<text x="' + (width / 2) + '" y="' + (top + plotHeight / 2 - 8) + '" text-anchor="middle">No new or removed openings recorded</text>') + labels + '</svg><div class="market-flow-legend"><span><i class="flow-new-swatch"></i>New observed</span><span><i class="flow-removed-swatch"></i>Removed observed</span></div></div>';
+    const barWidth = Math.max(5, Math.min(34, slotWidth * .72));
+    const bars = grouped.rows.map((entry, index) => { let positive = 0, negative = 0; const shapes = entry.chartKeys.map((key, seriesIndex) => { const raw = valuesFor(entry, key); const value = scaleValue(raw); if (!value) return ''; const base = value >= 0 ? positive : negative; const next = base + value; if (value >= 0) positive = next; else negative = next; const high = Math.max(base, next); const low = Math.min(base, next); const display = field === 'share' ? `${value > 0 ? '+' : ''}${value.toFixed(1)} pp` : `${value > 0 ? '+' : ''}${value.toLocaleString()} openings`; const tooltip = `${String(entry.period).slice(0, 10)} · ${label(key === '__remaining' ? 'Remaining' : key)} · ${display}`; return '<rect class="delta-sector chart-hover-target" data-sector="' + esc(key) + '" x="' + (x(index) - barWidth / 2) + '" y="' + y(high) + '" width="' + barWidth + '" height="' + Math.max(2, y(low) - y(high)) + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82" data-tooltip="' + esc(tooltip) + '"><title>' + esc(tooltip) + '</title></rect>'; }).join(''); return shapes; }).join('');
+    const labelStep = Math.max(1, Math.ceil(grouped.rows.length / 5));
+    const labels = grouped.rows.map((entry, index) => index % labelStep === 0 || index === grouped.rows.length - 1 ? '<text x="' + x(index) + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(String(entry.period).slice(0, 10)) + '</text>' : '').join('');
+    const legend = (grouped.rows[0]?.chartKeys || []).map((key, index) => '<button type="button" class="market-sector-key ' + (state.focus === key ? 'selected' : '') + '" data-sector="' + esc(key) + '"><i style="background:' + colors[index % colors.length] + '"></i>' + esc(label(key === '__remaining' ? 'Remaining' : key)) + '</button>').join('');
+    return '<div class="market-chart"><svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(title) + '"><line x1="' + left + '" x2="' + (width - right) + '" y1="' + zero + '" y2="' + zero + '" class="chart-zero-line"></line><line x1="' + left + '" x2="' + (width - right) + '" y1="' + top + '" y2="' + top + '" class="chart-gridline"></line>' + bars + labels + '</svg><div class="market-chart-legend">' + legend + '</div></div>';
   }
 
   function renderRankings(data) {
@@ -300,13 +310,15 @@
     document.querySelector('#market-share-title').textContent = dimensionLabel + ' share';
     document.querySelector('#market-volume-chart').innerHTML = chartSvg(viewData, 'volume', dimensionLabel + ' volume over time');
     document.querySelector('#market-share-chart').innerHTML = chartSvg(viewData, 'share', dimensionLabel + ' share over time');
-    document.querySelector('#market-flow-chart').innerHTML = isFiltered ? '<p class="subtle">Opening flow is available for the unfiltered historical view. Clear filters to compare new and removed openings over time.</p>' : flowSvg(viewData);
+    document.querySelector('#market-volume-delta-chart').innerHTML = deltaSvg(viewData, 'volume', 'Volume change by sector');
+    document.querySelector('#market-share-delta-chart').innerHTML = deltaSvg(viewData, 'share', 'Share change by sector');
     renderRankings(viewData);
     renderSignals(data);
     bindChartTooltips();
     document.querySelectorAll('.market-sector-key').forEach((button) => button.addEventListener('click', () => { state.focus = state.focus === button.dataset.sector ? '' : button.dataset.sector; persist(); render(data, currentData); }));
     document.querySelectorAll('.chart-sector').forEach((sector) => sector.addEventListener('click', () => openListingsForDimension(sector.dataset.sector)));
     document.querySelectorAll('.chart-point').forEach((point) => point.addEventListener('click', () => openListingsForDimension(point.dataset.sector)));
+    document.querySelectorAll('.delta-sector').forEach((sector) => sector.addEventListener('click', () => { if (sector.dataset.sector === '__remaining') return; state.focus = state.focus === sector.dataset.sector ? '' : sector.dataset.sector; persist(); render(data, currentData); }));
     document.querySelectorAll('.period-hover-zone').forEach((zone) => zone.addEventListener('click', (event) => {
       const svg = zone.ownerSVGElement;
       const transform = svg?.getScreenCTM();

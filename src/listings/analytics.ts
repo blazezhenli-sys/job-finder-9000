@@ -204,16 +204,53 @@ export function marketDashboardRankings(currentMetrics: any[], previousMetrics: 
     .sort((a, b) => b.active_listings - a.active_listings || a.dimension_value.localeCompare(b.dimension_value));
 }
 
+export function marketDashboardDeltaSeries(currentMetrics: any[], comparisonMetrics: any[]) {
+  const currentPeriods = [...new Set(currentMetrics.map((row) => String(row.snapshot_date)))].sort();
+  const comparisonPeriods = [...new Set(comparisonMetrics.map((row) => String(row.snapshot_date)))].sort();
+  const byPeriod = new Map<string, Map<string, any>>();
+  for (const row of comparisonMetrics) {
+    const period = String(row.snapshot_date);
+    if (!byPeriod.has(period)) byPeriod.set(period, new Map());
+    byPeriod.get(period)!.set(String(row.dimension_value), row);
+  }
+  const output: any[] = [];
+  for (const period of currentPeriods) {
+    const current = byPeriod.get(period) ?? new Map();
+    const periodIndex = comparisonPeriods.indexOf(period);
+    if (periodIndex <= 0) continue;
+    const prior = byPeriod.get(comparisonPeriods[periodIndex - 1]) ?? new Map();
+    const dimensions = new Set([...current.keys(), ...prior.keys()]);
+    for (const dimension of dimensions) {
+      const currentRow = current.get(dimension) ?? {};
+      const priorRow = prior.get(dimension) ?? {};
+      output.push({
+        snapshot_date: period,
+        dimension_value: dimension,
+        active_listings: Number(currentRow.active_listings || 0),
+        active_share: Number(currentRow.active_share || 0),
+        active_delta: Number(currentRow.active_listings || 0) - Number(priorRow.active_listings || 0),
+        share_delta: Math.round((Number(currentRow.active_share || 0) - Number(priorRow.active_share || 0)) * 1000000) / 1000000,
+        new_listings: Number(currentRow.new_listings || 0),
+        removed_listings: Number(currentRow.removed_listings || 0)
+      });
+    }
+  }
+  return output.sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)) || Number(b.active_delta) - Number(a.active_delta) || String(a.dimension_value).localeCompare(String(b.dimension_value)));
+}
+
 export async function getMarketDashboard(from: string, to: string, cohort = 'stable_28d', dimension = 'category', granularity = 'week') {
   const safeCohort = ['all', 'stable_28d'].includes(cohort) ? cohort : 'stable_28d';
   const safeDimension = ['category', 'specialty', 'technology', 'region', 'country'].includes(dimension) ? dimension : 'category';
   const safeGranularity = ['day', 'week', 'month'].includes(granularity) ? granularity : 'week';
   const { previousFrom, previousTo } = marketDashboardPeriods(from, to);
-  const [current, previous, totalCurrent, totalPrevious, signals] = await Promise.all([
+  const deltaLookbackDays = safeGranularity === 'day' ? 1 : safeGranularity === 'week' ? 7 : 32;
+  const deltaFrom = shiftDate(from, -deltaLookbackDays);
+  const [current, previous, totalCurrent, totalPrevious, deltaComparison, signals] = await Promise.all([
     getMarketTrends(from, to, safeCohort, safeDimension, safeGranularity),
     getMarketTrends(previousFrom, previousTo, safeCohort, safeDimension, safeGranularity),
     getMarketTrends(from, to, safeCohort, 'all', safeGranularity),
     getMarketTrends(previousFrom, previousTo, safeCohort, 'all', safeGranularity),
+    getMarketTrends(deltaFrom, to, safeCohort, safeDimension, safeGranularity),
     pool.query('SELECT s.*, e.name AS employer_name FROM market_signals s LEFT JOIN employers e ON e.id=s.employer_id WHERE s.status=\'active\' ORDER BY s.last_seen_at DESC LIMIT 12')
   ]);
   const rankings = marketDashboardRankings(current.metrics, previous.metrics);
@@ -254,6 +291,7 @@ export async function getMarketDashboard(from: string, to: string, cohort = 'sta
       coverage_note: currentCoverage?.coverage_note || 'Snapshots begin after deployment.'
     },
     series: current.metrics,
+    delta_series: marketDashboardDeltaSeries(current.metrics, deltaComparison.metrics),
     total_series: totalCurrent.metrics,
     rankings,
     signals: signals.rows
