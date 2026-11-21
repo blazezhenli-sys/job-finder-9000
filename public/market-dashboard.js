@@ -105,7 +105,7 @@
   }
 
   function groupSeries(data) {
-    const periods = [...new Set((data.series || []).map((row) => row.snapshot_date))].sort();
+    const periods = [...new Set((data.series || []).map((row) => row.snapshot_date))].sort((a, b) => new Date(a).getTime() - new Date(b).getTime() || String(a).localeCompare(String(b)));
     const keyTotals = new Map();
     (data.series || []).forEach((row) => keyTotals.set(row.dimension_value, (keyTotals.get(row.dimension_value) || 0) + Number(row.active_listings || 0)));
     const keys = [...keyTotals.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, 8).map(([key]) => key);
@@ -199,7 +199,7 @@
 
   function groupDeltaSeries(data) {
     const rows = data.delta_series || [];
-    const periods = [...new Set(rows.map((row) => String(row.snapshot_date)))].sort();
+    const periods = [...new Set(rows.map((row) => String(row.snapshot_date)))].sort((a, b) => new Date(a).getTime() - new Date(b).getTime() || a.localeCompare(b));
     const keyTotals = new Map();
     rows.forEach((row) => keyTotals.set(row.dimension_value, (keyTotals.get(row.dimension_value) || 0) + Math.abs(Number(row.active_delta || 0))));
     const keys = [...keyTotals.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, 8).map(([key]) => key);
@@ -224,7 +224,7 @@
     const x = (index) => left + plotWidth * ((index + .5) / Math.max(1, grouped.rows.length));
     const y = (value) => zero - (value / maxValue) * (plotHeight / 2);
     const slotWidth = plotWidth / Math.max(1, grouped.rows.length);
-    const barWidth = Math.max(5, Math.min(34, slotWidth * .72));
+    const barWidth = Math.max(2, slotWidth * .94);
     const bars = grouped.rows.map((entry, index) => { let positive = 0, negative = 0; const shapes = entry.chartKeys.map((key, seriesIndex) => { const raw = valuesFor(entry, key); const value = scaleValue(raw); if (!value) return ''; const base = value >= 0 ? positive : negative; const next = base + value; if (value >= 0) positive = next; else negative = next; const high = Math.max(base, next); const low = Math.min(base, next); const display = field === 'share' ? `${value > 0 ? '+' : ''}${value.toFixed(1)} pp` : `${value > 0 ? '+' : ''}${value.toLocaleString()} openings`; const tooltip = `${String(entry.period).slice(0, 10)} · ${label(key === '__remaining' ? 'Remaining' : key)} · ${display}`; return '<rect class="delta-sector chart-hover-target" data-sector="' + esc(key) + '" x="' + (x(index) - barWidth / 2) + '" y="' + y(high) + '" width="' + barWidth + '" height="' + Math.max(2, y(low) - y(high)) + '" fill="' + colors[seriesIndex % colors.length] + '" opacity=".82" data-tooltip="' + esc(tooltip) + '"><title>' + esc(tooltip) + '</title></rect>'; }).join(''); return shapes; }).join('');
     const labelStep = Math.max(1, Math.ceil(grouped.rows.length / 5));
     const labels = grouped.rows.map((entry, index) => index % labelStep === 0 || index === grouped.rows.length - 1 ? '<text x="' + x(index) + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(String(entry.period).slice(0, 10)) + '</text>' : '').join('');
