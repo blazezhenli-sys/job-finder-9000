@@ -374,12 +374,34 @@ window.addEventListener('popstate', () => applyNavigationRoute().catch(console.e
 window.addEventListener('load', () => applyNavigationRoute(true).catch(console.error));
 
 const renderCompanyProfileWithBoardLinks = renderCompanyProfile;
+let companyEmailSourceData = new Map();
+function closeEmailSourcesModal() { $('#email-sources-modal')?.classList.add('hidden'); }
+function openEmailSourcesModal(emailId) {
+  const email = companyEmailSourceData.get(emailId);
+  if (!email) return;
+  const sources = (Array.isArray(email.sources) ? email.sources : []).filter((source) => source.sourceType === 'job_listing');
+  $('#email-sources-title').textContent = `Listings containing ${email.email}`;
+  $('#email-sources-subtitle').textContent = `${sources.length} listing${sources.length === 1 ? '' : 's'} found · ${email.category || 'other'}`;
+  $('#email-sources-list').innerHTML = sources.length ? sources.map((source) => {
+    const url = source.listingUrl || source.sourceUrl;
+    const title = source.listingTitle || 'Job listing';
+    return `<div class="email-source-row"><div><strong>${esc(title)}</strong><small class="subtle">${esc(source.sourceType === 'job_listing' ? 'Job listing' : 'Company page')}</small></div>${url ? `<a class="source-link" href="${esc(url)}" target="_blank" rel="noreferrer">Open listing ↗</a>` : ''}</div>`;
+  }).join('') : '<p class="subtle">No listing sources are currently active.</p>';
+  $('#email-sources-modal').classList.remove('hidden');
+}
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('.company-email-see-all');
+  if (button) openEmailSourcesModal(button.dataset.emailId);
+});
+$('#close-email-sources')?.addEventListener('click', closeEmailSourcesModal);
+$('.email-sources-backdrop')?.addEventListener('click', closeEmailSourcesModal);
 renderCompanyProfile = function(data) {
   renderCompanyProfileWithBoardLinks(data);
   const company = data.company || {};
   if (company.website || company.career_url) $('#company-profile-subtitle').innerHTML = [company.website ? `<a class="source-link" href="${esc(company.website)}" target="_blank" rel="noreferrer">${esc(company.website)} ↗</a>` : '', company.career_url ? `<a class="source-link" href="${esc(company.career_url)}" target="_blank" rel="noreferrer">Careers ↗</a>` : ''].filter(Boolean).join(' · ');
   const socialLinks = data.socialLinks || [];
   const emails = data.emails || [];
+  companyEmailSourceData = new Map(emails.map((email) => [String(email.id), email]));
   const profileGrid = document.querySelector('#company-profile .company-profile-grid');
   profileGrid?.classList.add('company-details-grid');
   const platformLabel = { bluesky: 'Bluesky', mastodon: 'Mastodon', youtube: 'YouTube', linkedin: 'LinkedIn', facebook: 'Facebook', x: 'X' };
@@ -389,8 +411,13 @@ renderCompanyProfile = function(data) {
     profileGrid.insertAdjacentHTML('beforeend', `<div class="company-panel company-social-panel"><div class="company-panel-heading"><h2>Social profiles</h2><span class="subtle">${socialLinks.length} discovered</span></div>${socialLinks.length ? socialLinks.map((link) => `<div class="health-row"><span>${esc(platformLabel[link.platform] || link.platform)}</span><a class="source-link" href="${esc(link.profile_url)}" target="_blank" rel="noreferrer">Open profile ↗</a></div>`).join('') : '<p class="subtle">No explicit social profiles found yet.</p>'}</div>`);
     const emailRows = emails.map((email) => {
       const sources = Array.isArray(email.sources) ? email.sources : [];
-      const sourceLinks = sources.map((source) => source.sourceUrl ? `<a class="source-link" href="${esc(source.sourceUrl)}" target="_blank" rel="noreferrer">${source.sourceType === 'job_listing' ? 'Job listing' : 'Company page'} ↗</a>` : '').filter(Boolean).join(' · ');
-      return `<div class="health-row"><span><a class="source-link" href="mailto:${esc(email.email)}">${esc(email.email)}</a><small class="subtle"> · ${esc(String(email.category || 'other'))}</small></span><span>${sourceLinks || '<span class="subtle">Source unavailable</span>'}</span></div>`;
+      const listingSources = sources.filter((source) => source.sourceType === 'job_listing');
+      const primarySource = sources.find((source) => source.sourceType === 'company_page') || listingSources[0];
+      const primaryUrl = primarySource?.sourceType === 'job_listing' ? (primarySource.listingUrl || primarySource.sourceUrl) : primarySource?.sourceUrl;
+      const primaryLabel = primarySource?.sourceType === 'job_listing' ? (primarySource.listingTitle || 'Job listing') : 'Company page';
+      const primaryLink = primarySource ? (primaryUrl ? `<a class="source-link" href="${esc(primaryUrl)}" target="_blank" rel="noreferrer">${esc(primaryLabel)} ↗</a>` : esc(primaryLabel)) : '<span class="subtle">Source unavailable</span>';
+      const seeAll = listingSources.length > 1 ? `<button type="button" class="button secondary email-source-button company-email-see-all" data-email-id="${esc(String(email.id))}">See all ${listingSources.length} listings</button>` : '';
+      return `<div class="health-row company-email-row"><span><a class="source-link" href="mailto:${esc(email.email)}">${esc(email.email)}</a><small class="subtle"> · ${esc(String(email.category || 'other'))}</small></span><span class="company-email-sources"><span>${primaryLink}</span>${seeAll}</span></div>`;
     }).join('');
     profileGrid.insertAdjacentHTML('beforeend', `<div class="company-panel company-email-panel"><div class="company-panel-heading"><h2>Public emails</h2><span class="subtle">${emails.length} active</span></div>${emailRows || '<p class="subtle">No public emails found yet.</p>'}</div>`);
     profileGrid.insertAdjacentHTML('afterend', `<div class="company-panel company-social-activity"><div class="company-panel-heading"><div><h2>Social activity</h2><p class="subtle">Original public posts from discovered company accounts · latest 50</p></div></div><div class="company-social-timeline">${socialTimeline}</div></div>`);

@@ -385,8 +385,8 @@ app.get('/api/companies/:id', async (request, reply) => {
     ,pool.query(`SELECT id, platform, profile_url, source_url, first_seen_at, last_seen_at, social_poll_last_attempted_at, social_poll_last_success_at, social_poll_next_at, social_poll_error, social_poll_consecutive_failures FROM company_social_links WHERE employer_id=$1 AND is_active ORDER BY platform, profile_url`, [id])
     ,pool.query(`SELECT id, social_link_id, platform, author_name, author_handle, author_url, source_url, text, published_at, fetched_at FROM company_social_posts WHERE employer_id=$1 ORDER BY published_at DESC LIMIT 50`, [id])
     ,pool.query(`SELECT ce.id, ce.email, ce.category, ce.first_seen_at, ce.last_seen_at,
-        COALESCE(jsonb_agg(jsonb_build_object('id', ces.id, 'sourceType', ces.source_type, 'sourceUrl', ces.source_url, 'listingId', ces.listing_id, 'evidence', ces.evidence, 'firstSeenAt', ces.first_seen_at, 'lastSeenAt', ces.last_seen_at) ORDER BY ces.source_type, ces.source_url) FILTER (WHERE ces.id IS NOT NULL), '[]'::jsonb) AS sources
-      FROM company_emails ce LEFT JOIN company_email_sources ces ON ces.company_email_id=ce.id AND ces.is_active
+        COALESCE(jsonb_agg(jsonb_build_object('id', ces.id, 'sourceType', ces.source_type, 'sourceUrl', ces.source_url, 'listingId', ces.listing_id, 'listingTitle', listing.title, 'listingUrl', COALESCE(NULLIF(listing.original_url,''), NULLIF(listing.application_url,''), ces.source_url), 'evidence', ces.evidence, 'firstSeenAt', ces.first_seen_at, 'lastSeenAt', ces.last_seen_at) ORDER BY ces.source_type, ces.source_url) FILTER (WHERE ces.id IS NOT NULL), '[]'::jsonb) AS sources
+      FROM company_emails ce LEFT JOIN company_email_sources ces ON ces.company_email_id=ce.id AND ces.is_active LEFT JOIN job_listings listing ON listing.id=ces.listing_id
       WHERE ce.employer_id=$1 AND ce.is_active GROUP BY ce.id ORDER BY ce.category, ce.email`, [id])
   ]);
   const summaryRow = summary.rows[0] ?? {};
