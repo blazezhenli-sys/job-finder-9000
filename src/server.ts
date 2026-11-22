@@ -607,10 +607,32 @@ app.patch('/api/authors/:id', async (request, reply) => {
   const values: unknown[] = []; const assignments: string[] = [];
   for (const field of ['classification', 'is_known_aggregator', 'suspected_automated_syndication'] as const) if (body[field] !== undefined) { values.push(field === 'classification' ? body[field] : Boolean(body[field])); assignments.push(`${field} = $${values.length}`); }
   if (!assignments.length) return reply.code(400).send({ error: 'No changes supplied' });
-  values.push((request.params as { id: string }).id);
-  const result = await pool.query(`UPDATE author_profiles SET ${assignments.join(', ')}, updated_at = now() WHERE id = $${values.length} RETURNING *`, values);
-  if (!result.rows[0]) return reply.code(404).send({ error: 'Author not found' });
-  return result.rows[0];
+  const authorId = (request.params as { id: string }).id;
+  const result = await withTransaction(async (client) => {
+    values.push(authorId);
+    const author = await client.query(`UPDATE author_profiles SET ${assignments.join(', ')}, updated_at = now() WHERE id = $${values.length} RETURNING *`, values);
+    if (!author.rows[0]) return undefined;
+
+    // Existing opportunities store their classification independently from the author profile.
+    // Keep those persisted tags in sync when an author is manually identified as an aggregator.
+    if (body.classification === 'aggregator' || body.is_known_aggregator === true) {
+      await client.query(`UPDATE opportunities
+        SET signal_category = 'aggregated_listing',
+            signal_quality = 5,
+            signal_quality_breakdown = $2::jsonb,
+            classification_reasons = $3::jsonb,
+            suppressed = true,
+            classification_version = classification_version + 1
+        WHERE author_profile_id = $1`, [
+        authorId,
+        JSON.stringify([{ label: 'Signal category', points: 5, evidence: ['aggregated_listing'] }]),
+        JSON.stringify(['Author marked as aggregator'])
+      ]);
+    }
+    return author.rows[0];
+  });
+  if (!result) return reply.code(404).send({ error: 'Author not found' });
+  return result;
 });
 
 app.get('/api/aggregator-registry', async () => ({ entries: (await pool.query('SELECT * FROM aggregator_registry ORDER BY created_at')).rows }));
