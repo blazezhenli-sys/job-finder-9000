@@ -58,7 +58,7 @@ export const config = {
   companyEnrichmentIntervalMs: num(process.env.COMPANY_ENRICHMENT_INTERVAL_MS, 3_600_000),
   companyEnrichmentConcurrency: Math.max(1, Math.floor(num(process.env.COMPANY_ENRICHMENT_CONCURRENCY, 2))),
   enableCompanySocialActivity: bool(process.env.ENABLE_COMPANY_SOCIAL_ACTIVITY, true),
-  companySocialPollIntervalMs: num(process.env.COMPANY_SOCIAL_POLL_INTERVAL_MS, 900_000),
+  companySocialPollIntervalMs: num(process.env.COMPANY_SOCIAL_POLL_INTERVAL_MS, 10_800_000),
   companySocialConcurrency: Math.max(1, Math.floor(num(process.env.COMPANY_SOCIAL_CONCURRENCY, 2))),
   companySocialBackfillLimit: Math.max(1, Math.floor(num(process.env.COMPANY_SOCIAL_BACKFILL_LIMIT, 50))),
   companySocialRetentionDays: Math.max(1, Math.floor(num(process.env.COMPANY_SOCIAL_RETENTION_DAYS, 14))),
