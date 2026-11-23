@@ -213,10 +213,15 @@ app.get('/api/market/compare', async (request, reply) => {
 });
 
 app.get('/api/opportunities', async (request) => {
-  const query = request.query as { source?: string; status?: string; sort?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
+  const query = request.query as { search?: string; source?: string; status?: string; sort?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
   const conditions: string[] = [];
   const values: unknown[] = [];
   if (query.source && ['bluesky', 'hacker_news', 'mastodon', 'reddit', 'x'].includes(query.source)) { values.push(query.source); conditions.push(`source = $${values.length}`); }
+  const search = query.search?.trim();
+  if (search) {
+    values.push(`%${search.replace(/[\\%_]/g, '\\$&')}%`);
+    conditions.push(`concat_ws(' ', text, author_name, author_handle, source, technologies::text, employment_types::text) ILIKE $${values.length} ESCAPE E'\\\\'`);
+  }
   // Hide known Reddit moderation bot replies that may have been stored before the ingestion guard existed.
   conditions.push(`NOT (source = 'reddit' AND (text ~* 'your submission has been automatically removed' OR text ~* 'i am a bot, and this action was performed automatically'))`);
   if (query.status && ['unread', 'interesting', 'dismissed', 'contacted'].includes(query.status)) { values.push(query.status); conditions.push(`status = $${values.length}`); }
