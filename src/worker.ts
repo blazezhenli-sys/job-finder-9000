@@ -4,6 +4,7 @@ import { deliverNotifications } from './notifications.js';
 import { processPost, removeExpired, updateHealth } from './pipeline-service.js';
 import { BlueskySource } from './sources/bluesky.js';
 import { HackerNewsSource } from './sources/hacker-news.js';
+import { XSearchSource } from './sources/x.js';
 import type { SourceAdapter } from './sources/types.js';
 import { startListingPolling } from './listings/service.js';
 import { startListingDiscovery } from './listings/discovery.js';
@@ -38,6 +39,7 @@ export async function startWorkers() {
   if (config.enablePosts) {
     if (config.enableBluesky) sources.push(new BlueskySource());
     if (config.enableHackerNews) sources.push(new HackerNewsSource());
+    if (config.enableXPosts) sources.push(new XSearchSource());
   }
   const processFeedPost = (post: Parameters<typeof processPost>[0], cursor?: string, recovered?: boolean) => processPost(post, cursor, recovered, { notify: false });
   for (const source of sources) {

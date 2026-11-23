@@ -328,13 +328,29 @@ async function finishTask(taskId: string, link: SocialLink, result: SocialPollRe
 }
 
 async function queueDueTasks(platforms: CompanySocialPlatform[]): Promise<Array<{ taskId: string; link: SocialLink }>> {
-  const links = await pool.query(`SELECT l.id, l.employer_id, e.name AS employer_name, l.platform, l.profile_url
-    FROM company_social_links l JOIN employers e ON e.id=l.employer_id
-    WHERE l.is_active AND l.platform = ANY($1::text[])
-      AND (l.social_poll_next_at IS NULL OR l.social_poll_next_at <= now())
-    ORDER BY l.social_poll_next_at NULLS FIRST, l.last_seen_at DESC LIMIT 500`, [platforms]);
+  const nonXPlatforms = platforms.filter((platform) => platform !== 'x');
+  const linkRows: SocialLink[] = [];
+  if (nonXPlatforms.length) {
+    const links = await pool.query(`SELECT l.id, l.employer_id, e.name AS employer_name, l.platform, l.profile_url
+      FROM company_social_links l JOIN employers e ON e.id=l.employer_id
+      WHERE l.is_active AND l.platform = ANY($1::text[])
+        AND (l.social_poll_next_at IS NULL OR l.social_poll_next_at <= now())
+      ORDER BY l.social_poll_next_at NULLS FIRST, l.last_seen_at DESC LIMIT 500`, [nonXPlatforms]);
+    linkRows.push(...links.rows as SocialLink[]);
+  }
+  // X has a provider-wide limit. Queue one due account per scheduler cycle;
+  // the X-enabled scheduler runs no more frequently than the configured
+  // minimum queue interval below.
+  if (platforms.includes('x')) {
+    const xLinks = await pool.query(`SELECT l.id, l.employer_id, e.name AS employer_name, l.platform, l.profile_url
+      FROM company_social_links l JOIN employers e ON e.id=l.employer_id
+      WHERE l.is_active AND l.platform='x'
+        AND (l.social_poll_next_at IS NULL OR l.social_poll_next_at <= now())
+      ORDER BY l.social_poll_next_at NULLS FIRST, l.last_seen_at DESC LIMIT 1`);
+    linkRows.push(...xLinks.rows as SocialLink[]);
+  }
   const queued: Array<{ taskId: string; link: SocialLink }> = [];
-  for (const row of links.rows as SocialLink[]) {
+  for (const row of linkRows) {
     const task = await pool.query(`INSERT INTO company_social_poll_tasks (employer_id, social_link_id, platform, profile_url, status)
       VALUES ($1,$2,$3,$4,'queued') ON CONFLICT DO NOTHING RETURNING id`, [row.employer_id, row.id, row.platform, row.profile_url]);
     if (task.rows[0]) queued.push({ taskId: task.rows[0].id, link: row });
@@ -462,5 +478,6 @@ export function startCompanySocialPolling(intervalMs: number) {
 
 export function startCompanySocialRsshubPolling(intervalMs: number) {
   void pollCompanySocialRsshub().catch((error) => console.error('RSSHub company social polling failed', error));
-  return setInterval(() => void pollCompanySocialRsshub().catch((error) => console.error('RSSHub company social polling failed', error)), intervalMs);
+  const schedulerIntervalMs = config.enableCompanySocialX ? config.companySocialXQueueIntervalMs : intervalMs;
+  return setInterval(() => void pollCompanySocialRsshub().catch((error) => console.error('RSSHub company social polling failed', error)), schedulerIntervalMs);
 }

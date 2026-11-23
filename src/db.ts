@@ -131,7 +131,7 @@ async function seedDefaults(client: pg.PoolClient) {
       [name, pattern, matchType, category, weight, negative]);
   }
   await client.query(`INSERT INTO app_settings (key, value) VALUES ('preferences', $1) ON CONFLICT (key) DO NOTHING`, [JSON.stringify(defaultPreferences)]);
-  await client.query(`INSERT INTO ingestion_states (source) VALUES ('bluesky'), ('hacker_news'), ('mastodon'), ('reddit') ON CONFLICT DO NOTHING`);
+  await client.query(`INSERT INTO ingestion_states (source) VALUES ('bluesky'), ('hacker_news'), ('mastodon'), ('reddit'), ('x') ON CONFLICT DO NOTHING`);
   for (const [pattern, label] of [
     ['nearskill.in', 'Observed job-board domain: NearSkill'],
     ['remote-work.app', 'Observed job-board domain: Remote Work'],

@@ -216,7 +216,7 @@ app.get('/api/opportunities', async (request) => {
   const query = request.query as { source?: string; status?: string; sort?: string; minQuality?: string; signalCategory?: string; workMode?: string; includeSuppressed?: string; limit?: string; offset?: string };
   const conditions: string[] = [];
   const values: unknown[] = [];
-  if (query.source && ['bluesky', 'hacker_news', 'mastodon', 'reddit'].includes(query.source)) { values.push(query.source); conditions.push(`source = $${values.length}`); }
+  if (query.source && ['bluesky', 'hacker_news', 'mastodon', 'reddit', 'x'].includes(query.source)) { values.push(query.source); conditions.push(`source = $${values.length}`); }
   // Hide known Reddit moderation bot replies that may have been stored before the ingestion guard existed.
   conditions.push(`NOT (source = 'reddit' AND (text ~* 'your submission has been automatically removed' OR text ~* 'i am a bot, and this action was performed automatically'))`);
   if (query.status && ['unread', 'interesting', 'dismissed', 'contacted'].includes(query.status)) { values.push(query.status); conditions.push(`status = $${values.length}`); }

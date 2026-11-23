@@ -1,4 +1,4 @@
-export type SourceName = 'bluesky' | 'hacker_news' | 'mastodon' | 'reddit';
+export type SourceName = 'bluesky' | 'hacker_news' | 'mastodon' | 'reddit' | 'x';
 export type OpportunityStatus = 'unread' | 'interesting' | 'dismissed' | 'contacted';
 export type SignalCategory = 'direct_hiring' | 'service_request' | 'employee_referral' | 'firsthand_announcement' | 'aggregated_listing' | 'uncertain';
 export type AuthorClassification = 'unknown' | 'aggregator' | 'employer' | 'legitimate_employer';
