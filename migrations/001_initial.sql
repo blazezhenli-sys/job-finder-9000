@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS detection_rules (
 
 CREATE TABLE IF NOT EXISTS opportunities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  source text NOT NULL CHECK (source IN ('bluesky', 'hacker_news', 'mastodon', 'reddit')),
+  source text NOT NULL CHECK (source IN ('bluesky', 'hacker_news', 'mastodon', 'reddit', 'x')),
   source_id text NOT NULL,
   author_name text NOT NULL DEFAULT '',
   author_handle text NOT NULL DEFAULT '',
